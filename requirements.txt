@@ -1,0 +1,18 @@
+# U2702A macOS Oscilloscope GUI - Dependencies
+# Install: pip install -r requirements.txt
+# Also requires: brew install libusb
+
+# GUI
+PySide6>=6.5
+
+# Real-time waveform plotting
+pyqtgraph>=0.13
+
+# Instrument communication
+pyvisa>=1.13
+pyvisa-py>=0.7
+pyusb>=1.2
+
+# Data processing
+numpy>=1.24
+scipy>=1.10

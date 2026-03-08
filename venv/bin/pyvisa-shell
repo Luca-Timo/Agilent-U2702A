@@ -1,0 +1,6 @@
+#!/Users/lucabresch/Documents/GitHub/Agilent-U2702A/venv/bin/python3.11
+import sys
+from pyvisa.cmd_line_tools import visa_shell
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(visa_shell())
