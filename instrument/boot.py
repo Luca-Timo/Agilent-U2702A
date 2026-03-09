@@ -169,12 +169,20 @@ def boot_device(device=None):
     except (usb.core.USBError, NotImplementedError) as e:
         logger.debug("Kernel driver detach: %s", e)
 
+    # Set configuration (required on macOS before control transfers)
+    try:
+        device.set_configuration()
+        logger.debug("USB configuration set")
+    except usb.core.USBError as e:
+        logger.debug("Set configuration: %s", e)
+
     # Send the 6-step boot sequence
     for i, transfer in enumerate(_BOOT_SEQUENCE):
         bmRequestType, bRequest, wValue, wIndex, data_or_wLength = transfer
         try:
             result = device.ctrl_transfer(
-                bmRequestType, bRequest, wValue, wIndex, data_or_wLength
+                bmRequestType, bRequest, wValue, wIndex, data_or_wLength,
+                timeout=5000,
             )
             if bmRequestType & 0x80:  # Device-to-host (read)
                 logger.debug(
@@ -187,10 +195,18 @@ def boot_device(device=None):
                     i + 1, wIndex, len(data_or_wLength),
                 )
         except usb.core.USBError as e:
-            # Detect macOS permission error (libusb_open fails)
-            if "Other error" in str(e) or e.errno is None:
-                import sys
-                venv = os.path.dirname(os.path.dirname(sys.executable))
+            import sys
+            venv = os.path.dirname(os.path.dirname(sys.executable))
+            # Detect macOS permission errors: "Other error", no errno,
+            # or timeout on the very first transfer (common on macOS
+            # when the process lacks USB entitlements)
+            err_str = str(e)
+            is_permission = (
+                "Other error" in err_str
+                or e.errno is None
+                or (i == 0 and "timed out" in err_str.lower())
+            )
+            if is_permission:
                 raise PermissionError(
                     f"Cannot access USB device (boot step {i + 1}).\n"
                     + _MACOS_PERMISSION_HINT.format(venv=venv)

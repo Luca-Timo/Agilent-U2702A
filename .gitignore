@@ -30,7 +30,15 @@ exports/*
 
 #Python stuff
 scripts/__pycache__/
+__pycache__/
 *.bak
 *.dwl
 *.dwl2
+
+#PlatformIO (ESP32-S3 firmware)
+firmware/.pio/
+firmware/.vscode/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
 
