@@ -12,7 +12,8 @@ from PySide6.QtCore import Qt, Signal, Slot, QThread, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QPushButton, QLabel, QMenuBar, QStatusBar, QSizePolicy,
-    QFrame, QScrollArea, QApplication,
+    QFrame, QScrollArea, QApplication, QDialog, QTextEdit,
+    QDialogButtonBox, QTabWidget,
 )
 from PySide6.QtGui import QAction, QFont
 
@@ -61,6 +62,97 @@ class StatusIndicator(QLabel):
         )
 
 
+APP_VERSION = "0.2.3-alpha"
+APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
+
+
+class AboutDialog(QDialog):
+    """About / License dialog — shows app info and GPL v3 license text."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About — Agilent U2702A Oscilloscope")
+        self.setMinimumSize(560, 420)
+        self.resize(600, 500)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        # --- Header ---
+        header = QLabel(
+            f"<h2 style='margin-bottom:2px;'>Agilent U2702A Oscilloscope</h2>"
+            f"<p style='color:#888; margin-top:0;'>Version {APP_VERSION}</p>"
+        )
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header)
+
+        # Description
+        desc = QLabel(
+            "A macOS desktop application for the Agilent U2702A USB oscilloscope,\n"
+            "built with PySide6 and PyQtGraph. Uses an ESP32-S3 as a USB bridge\n"
+            "to bypass Apple Silicon USB driver limitations."
+        )
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc.setStyleSheet("color: #aaaaaa; font-size: 12px;")
+        layout.addWidget(desc)
+
+        # --- Tabs: About / License ---
+        tabs = QTabWidget()
+
+        # About tab
+        about_text = QTextEdit()
+        about_text.setReadOnly(True)
+        about_text.setHtml(
+            f"<p><b>{APP_COPYRIGHT}</b></p>"
+            "<p>This program is free software: you can redistribute it and/or modify "
+            "it under the terms of the GNU General Public License as published by "
+            "the Free Software Foundation, either version 3 of the License, or "
+            "(at your option) any later version.</p>"
+            "<p>This program is distributed in the hope that it will be useful, "
+            "but WITHOUT ANY WARRANTY; without even the implied warranty of "
+            "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the "
+            "GNU General Public License for more details.</p>"
+            "<hr>"
+            "<p><b>Built with:</b></p>"
+            "<ul>"
+            "<li>Python 3.11+ / PySide6 (Qt 6)</li>"
+            "<li>PyQtGraph — real-time waveform plotting</li>"
+            "<li>NumPy — signal processing</li>"
+            "<li>PySerial — ESP32-S3 serial bridge</li>"
+            "</ul>"
+            "<p><b>Hardware:</b> ESP32-S3-DevKitC-1 USB bridge</p>"
+        )
+        tabs.addTab(about_text, "About")
+
+        # License tab
+        license_text = QTextEdit()
+        license_text.setReadOnly(True)
+        license_text.setFont(QFont("Menlo", 10))
+        license_text.setPlainText(self._load_license())
+        tabs.addTab(license_text, "License (GPL v3)")
+
+        layout.addWidget(tabs, stretch=1)
+
+        # OK button
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
+
+    @staticmethod
+    def _load_license() -> str:
+        """Load the LICENSE file from the project root."""
+        import os
+        license_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "LICENSE",
+        )
+        try:
+            with open(license_path, "r") as f:
+                return f.read()
+        except FileNotFoundError:
+            return "LICENSE file not found.\n\nThis software is licensed under the GNU General Public License v3.0."
+
+
 class MainWindow(QMainWindow):
     """Main oscilloscope window.
 
@@ -94,7 +186,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Agilent U2702A Oscilloscope — v0.2.1-alpha")
+        self.setWindowTitle(f"Agilent U2702A Oscilloscope — v{APP_VERSION}")
         self.setMinimumSize(1200, 800)
         self.resize(1440, 900)
 
@@ -163,9 +255,18 @@ class MainWindow(QMainWindow):
 
         # Settings menu
         settings_action = QAction("Settings...", self)
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)  # Keep visible (macOS moves it otherwise)
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self._open_settings)
         menubar.addAction(settings_action)
+
+        # Help menu
+        help_menu = menubar.addMenu("Help")
+
+        about_action = QAction("About...", self)
+        about_action.setMenuRole(QAction.MenuRole.NoRole)  # Keep in Help menu (macOS moves it otherwise)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
 
     def _build_toolbar(self):
         """Build the Run/Stop/Single toolbar."""
@@ -356,9 +457,9 @@ class MainWindow(QMainWindow):
             self._on_position_changed
         )
 
-        # --- Trigger panel → Worker ---
+        # --- Trigger panel → Worker + Waveform ---
         self._trigger_panel.level_changed.connect(
-            lambda v: self.sig_set_trigger_level.emit(v)
+            self._on_trigger_level_changed
         )
         self._trigger_panel.source_changed.connect(
             lambda v: self.sig_set_trigger_source.emit(v)
@@ -422,6 +523,10 @@ class MainWindow(QMainWindow):
         self.sig_set_position.emit(value)
         self._waveform.set_trigger_position(value)
 
+    def _on_trigger_level_changed(self, value: float):
+        self.sig_set_trigger_level.emit(value)
+        self._waveform.set_trigger_level(value)
+
     def _on_tdiv_changed(self, value: float):
         self.sig_set_tdiv.emit(value)
         # Get current V/div from active channel
@@ -484,6 +589,7 @@ class MainWindow(QMainWindow):
             self._trigger_panel.set_source(trig["source"])
         if "level" in trig:
             self._trigger_panel.set_level(trig["level"])
+            self._waveform.set_trigger_level(trig["level"])
         if "slope" in trig:
             self._trigger_panel.set_slope(trig["slope"])
         if "sweep" in trig:
@@ -585,6 +691,13 @@ class MainWindow(QMainWindow):
         """Handle channel color change from settings."""
         self._channel_colors[ch] = color
         self._waveform.set_channel_color(ch, color)
+
+    # --- About ---
+
+    def _show_about(self):
+        """Show About/License dialog."""
+        dialog = AboutDialog(self)
+        dialog.exec()
 
     # --- Cleanup ---
 

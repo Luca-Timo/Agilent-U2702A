@@ -2,7 +2,7 @@
 Waveform display widget using PyQtGraph.
 
 Dark background, custom graticule, N-channel support with configurable colors.
-Per-channel GND markers on Y-axis, trigger position marker on X-axis.
+Per-channel GND markers on Y-axis, trigger level + position indicators.
 """
 
 import numpy as np
@@ -16,12 +16,16 @@ from gui.theme import (
 )
 from processing.waveform import WaveformData
 
+# Trigger marker color
+TRIGGER_COLOR = "#FF4444"
+
 
 class WaveformWidget(pg.PlotWidget):
     """Real-time waveform display with graticule overlay.
 
     Supports N channels with dynamic trace creation/removal.
-    Includes per-channel GND markers and trigger position indicator.
+    Includes per-channel GND markers, trigger level line, and trigger
+    position indicator.
     """
 
     NUM_H_DIVS = 10   # Horizontal divisions
@@ -38,9 +42,12 @@ class WaveformWidget(pg.PlotWidget):
         self._gnd_markers: dict[int, pg.TextItem] = {}
         self._channel_offsets: dict[int, float] = {}
 
-        # Trigger position marker
-        self._trigger_marker: pg.ScatterPlotItem | None = None
-        self._trigger_pos: float = 0.0  # Time position (seconds)
+        # Trigger state
+        self._trigger_pos: float = 0.0      # Time position (seconds)
+        self._trigger_level: float = 0.0    # Voltage level
+        self._trigger_pos_marker: pg.ScatterPlotItem | None = None
+        self._trigger_level_line: pg.InfiniteLine | None = None
+        self._trigger_level_badge: pg.TextItem | None = None
 
         # Default colors
         for ch in range(1, num_channels + 1):
@@ -50,7 +57,7 @@ class WaveformWidget(pg.PlotWidget):
         # Configure plot
         self._setup_plot()
         self._draw_graticule()
-        self._create_trigger_marker()
+        self._create_trigger_indicators()
 
         # Initial axis range
         self._v_per_div = 1.0
@@ -113,16 +120,49 @@ class WaveformWidget(pg.PlotWidget):
             self.addItem(line)
             self._graticule_lines.append(('hgrid', line, i))
 
-    def _create_trigger_marker(self):
-        """Create the trigger position marker (▼ at top of plot)."""
-        self._trigger_marker = pg.ScatterPlotItem(
+    def _create_trigger_indicators(self):
+        """Create trigger position marker (▼ top) and trigger level line + badge."""
+        # --- Trigger position marker (▼ at top of plot) ---
+        self._trigger_pos_marker = pg.ScatterPlotItem(
             pos=np.array([[0.0, 0.0]]),
             symbol='t',            # Downward-pointing triangle
             size=12,
-            pen=pg.mkPen(ACCENT_BLUE, width=1),
-            brush=pg.mkBrush(ACCENT_BLUE),
+            pen=pg.mkPen(TRIGGER_COLOR, width=1),
+            brush=pg.mkBrush(TRIGGER_COLOR),
         )
-        self.addItem(self._trigger_marker)
+        self.addItem(self._trigger_pos_marker)
+
+        # --- Trigger level horizontal line (dashed, subtle) ---
+        self._trigger_level_line = pg.InfiniteLine(
+            pos=0.0, angle=0,
+            pen=pg.mkPen(TRIGGER_COLOR, width=0.8, style=Qt.PenStyle.DashLine),
+        )
+        self.addItem(self._trigger_level_line)
+
+        # --- Trigger level badge on right edge (T ◀ level) ---
+        self._trigger_level_badge = pg.TextItem(
+            html=self._trigger_badge_html(self._trigger_level),
+            anchor=(1.0, 0.5),  # Right-aligned
+        )
+        self.addItem(self._trigger_level_badge)
+
+    @staticmethod
+    def _trigger_badge_html(level: float) -> str:
+        """Generate HTML for the trigger level badge."""
+        from gui.theme import format_voltage
+        text = format_voltage(level)
+        return (
+            f'<div style="'
+            f'background-color: {TRIGGER_COLOR};'
+            f'color: #ffffff;'
+            f'border: 1px solid {TRIGGER_COLOR};'
+            f'border-radius: 2px;'
+            f'padding: 1px 4px;'
+            f'font-size: 10px;'
+            f'font-weight: bold;'
+            f'font-family: Menlo, monospace;'
+            f'">T ◀ {text}</div>'
+        )
 
     def _update_axis_range(self):
         """Update axis range based on current V/div and T/div."""
@@ -146,8 +186,9 @@ class WaveformWidget(pg.PlotWidget):
         # Reposition GND markers to left edge
         self._update_gnd_positions()
 
-        # Reposition trigger marker to top edge
+        # Reposition trigger indicators
         self._update_trigger_position()
+        self._update_trigger_level_position()
 
     def _update_gnd_positions(self):
         """Reposition all GND markers to the left edge of the plot."""
@@ -158,12 +199,21 @@ class WaveformWidget(pg.PlotWidget):
             marker.setPos(left_x, offset)
 
     def _update_trigger_position(self):
-        """Reposition the trigger marker to the top edge of the plot."""
-        if self._trigger_marker is not None:
+        """Reposition the trigger position marker to the top edge."""
+        if self._trigger_pos_marker is not None:
             top_y = (self.NUM_V_DIVS / 2) * self._v_per_div
-            self._trigger_marker.setData(
+            self._trigger_pos_marker.setData(
                 pos=np.array([[self._trigger_pos, top_y]])
             )
+
+    def _update_trigger_level_position(self):
+        """Reposition the trigger level line and right-edge badge."""
+        if self._trigger_level_line is not None:
+            self._trigger_level_line.setPos(self._trigger_level)
+
+        if self._trigger_level_badge is not None:
+            right_x = (self.NUM_H_DIVS / 2) * self._t_per_div
+            self._trigger_level_badge.setPos(right_x, self._trigger_level)
 
     # --- Public API ---
 
@@ -205,9 +255,24 @@ class WaveformWidget(pg.PlotWidget):
         self._update_gnd_positions()
 
     def set_trigger_position(self, time_pos: float):
-        """Update the trigger position marker on the X-axis."""
+        """Update the trigger position marker on the X-axis (▼ at top)."""
         self._trigger_pos = time_pos
         self._update_trigger_position()
+
+    def set_trigger_level(self, level: float):
+        """Update the trigger level line and right-edge badge."""
+        self._trigger_level = level
+
+        # Move horizontal dashed line
+        if self._trigger_level_line is not None:
+            self._trigger_level_line.setPos(level)
+
+        # Update badge text and position
+        if self._trigger_level_badge is not None:
+            self._trigger_level_badge.setHtml(
+                self._trigger_badge_html(level)
+            )
+            self._update_trigger_level_position()
 
     def update_waveform(self, waveform: WaveformData):
         """Update a channel's waveform display.
@@ -241,7 +306,7 @@ class WaveformWidget(pg.PlotWidget):
     def _create_gnd_marker(self, channel: int):
         """Create a GND badge on the left edge for a channel.
 
-        Renders as a bordered, colored label: ▶ CH1  (or just ▶ 1)
+        Renders as a bordered, colored label: CH ▶
         Positioned at the left plot edge, at the channel's 0V offset.
         """
         if channel in self._gnd_markers:

@@ -78,18 +78,91 @@ def adc_to_voltage(raw: np.ndarray, v_per_div: float,
 
 
 def make_time_axis(num_points: int, t_per_div: float,
-                   num_horizontal_divs: int = 10) -> np.ndarray:
+                   num_horizontal_divs: int = 10,
+                   trigger_sample: int | None = None) -> np.ndarray:
     """Create time axis for waveform display.
 
-    10 horizontal divisions, centered at 0.
+    10 horizontal divisions. If trigger_sample is given, that sample
+    is placed at time=0; otherwise the center of the array is at time=0.
 
     Args:
         num_points: Number of data points.
         t_per_div: Time per division in seconds.
         num_horizontal_divs: Number of horizontal divisions (default 10).
+        trigger_sample: Sample index where trigger occurred (time=0).
+            If None, center of array is used.
 
     Returns:
         float64 time axis in seconds.
     """
-    half_span = (num_horizontal_divs / 2) * t_per_div
-    return np.linspace(-half_span, half_span, num_points)
+    total_span = num_horizontal_divs * t_per_div
+    dt = total_span / num_points
+
+    if trigger_sample is None:
+        trigger_sample = num_points // 2
+
+    # time=0 at trigger_sample, negative before, positive after
+    t0 = -trigger_sample * dt
+    return np.linspace(t0, t0 + (num_points - 1) * dt, num_points)
+
+
+def find_trigger_crossing(voltage: np.ndarray, level: float,
+                          slope: str = "POS",
+                          search_center: int | None = None,
+                          search_radius: int | None = None) -> int | None:
+    """Find the sample index where the signal crosses the trigger level.
+
+    Searches for the crossing nearest to the center of the buffer
+    (or search_center if given).
+
+    Args:
+        voltage: Voltage array.
+        level: Trigger level in volts.
+        slope: "POS" for rising edge, "NEG" for falling edge.
+        search_center: Center of search region (default: array midpoint).
+        search_radius: Search ± this many samples from center (default: half array).
+
+    Returns:
+        Sample index of the trigger crossing, or None if not found.
+    """
+    n = len(voltage)
+    if n < 2:
+        return None
+
+    if search_center is None:
+        search_center = n // 2
+    if search_radius is None:
+        search_radius = n // 2
+
+    lo = max(0, search_center - search_radius)
+    hi = min(n - 1, search_center + search_radius)
+
+    best_idx = None
+    best_dist = n  # distance from search_center
+
+    for i in range(lo, hi):
+        if slope == "POS":
+            # Rising edge: voltage[i] <= level < voltage[i+1]
+            if voltage[i] <= level < voltage[i + 1]:
+                dist = abs(i - search_center)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+        elif slope == "NEG":
+            # Falling edge: voltage[i] >= level > voltage[i+1]
+            if voltage[i] >= level > voltage[i + 1]:
+                dist = abs(i - search_center)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+        else:
+            # Either edge
+            crosses_up = voltage[i] <= level < voltage[i + 1]
+            crosses_down = voltage[i] >= level > voltage[i + 1]
+            if crosses_up or crosses_down:
+                dist = abs(i - search_center)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+
+    return best_idx

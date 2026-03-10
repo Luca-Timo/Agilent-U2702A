@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.2.1-alpha
+> Current version: 0.2.3-alpha
 > Last updated: 2026-03-10
 
 ---
@@ -57,6 +57,10 @@
 - [x] Per-channel GND/0V markers on Y-axis (arrow + channel number)
 - [x] Trigger position marker on X-axis (▼ triangle)
 - [x] Larger default window size (1440×900)
+- [x] Trigger level indicator (dashed line + right-edge badge)
+- [x] Software trigger alignment (trigger edge at center marker)
+- [x] GPL v3 license
+- [x] About/License dialog in Help menu
 
 **Milestone**: Can control all scope settings from the GUI and see live waveforms.
 

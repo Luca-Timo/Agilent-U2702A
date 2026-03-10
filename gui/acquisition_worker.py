@@ -18,6 +18,7 @@ from instrument.serial_bridge import (
 from instrument import protocol
 from processing.waveform import (
     WaveformData, parse_wav_data, adc_to_voltage, make_time_axis,
+    find_trigger_crossing,
 )
 
 
@@ -61,6 +62,11 @@ class AcquisitionWorker(QObject):
         self._channels: dict[int, ChannelSettings] = {}
         self._enabled_channels: list[int] = [1]
         self._t_per_div: float = 1e-3
+
+        # Trigger settings (for software trigger alignment)
+        self._trigger_level: float = 0.0
+        self._trigger_slope: str = "POS"
+        self._trigger_source: str = "CHAN1"
 
         # FPS tracking
         self._frame_count = 0
@@ -169,6 +175,14 @@ class AcquisitionWorker(QObject):
         if "TRIGGER:EDGE:COUPLING?" in raw:
             parsed["trigger"]["coupling"] = raw["TRIGGER:EDGE:COUPLING?"].strip()
 
+        # Store trigger settings locally for software trigger alignment
+        if "level" in parsed["trigger"]:
+            self._trigger_level = parsed["trigger"]["level"]
+        if "slope" in parsed["trigger"]:
+            self._trigger_slope = parsed["trigger"]["slope"]
+        if "source" in parsed["trigger"]:
+            self._trigger_source = parsed["trigger"]["source"]
+
         return parsed
 
     # --- Channel settings (from GUI) ---
@@ -258,6 +272,7 @@ class AcquisitionWorker(QObject):
 
     @Slot(float)
     def set_trigger_level(self, value: float):
+        self._trigger_level = value
         if self._bridge and self._bridge.is_open:
             try:
                 self._bridge.write(protocol.trigger_edge_level_set(value))
@@ -266,6 +281,7 @@ class AcquisitionWorker(QObject):
 
     @Slot(str)
     def set_trigger_source(self, source: str):
+        self._trigger_source = source
         if self._bridge and self._bridge.is_open:
             try:
                 self._bridge.write(protocol.trigger_edge_source_set(source))
@@ -274,6 +290,7 @@ class AcquisitionWorker(QObject):
 
     @Slot(str)
     def set_trigger_slope(self, slope: str):
+        self._trigger_slope = slope
         if self._bridge and self._bridge.is_open:
             try:
                 self._bridge.write(protocol.trigger_edge_slope_set(slope))
@@ -349,6 +366,10 @@ class AcquisitionWorker(QObject):
         Fires :SINGLE ONCE to trigger the scope, then reads each
         channel's data from that single capture. The scope captures
         ALL channels simultaneously — we just read them one by one.
+
+        The trigger source channel is read first so we can detect
+        the trigger crossing. All channels then use the same
+        trigger_sample for time-axis alignment.
         """
         if not self._bridge or not self._bridge.is_open:
             self.error_occurred.emit("Not connected")
@@ -365,14 +386,50 @@ class AcquisitionWorker(QObject):
             # Trigger ONE acquisition for all channels
             self._bridge.write(protocol.SINGLE, timeout=1.0)
 
-            # Read each channel's data from this capture
-            for i, ch in enumerate(self._enabled_channels):
+            # Determine trigger source channel number (e.g. "CHAN1" → 1)
+            trig_ch = None
+            if self._trigger_source.startswith("CHAN"):
+                try:
+                    trig_ch = int(self._trigger_source[4:])
+                except ValueError:
+                    trig_ch = None
+
+            # Order channels: trigger source first (so we find the
+            # crossing before building time axes for other channels).
+            ordered = list(self._enabled_channels)
+            if trig_ch in ordered:
+                ordered.remove(trig_ch)
+                ordered.insert(0, trig_ch)
+
+            trigger_sample = None  # shared across all channels
+
+            for i, ch in enumerate(ordered):
                 if not self._running and self._mode == "continuous":
                     break
 
                 try:
-                    waveform = self._read_channel_data(ch, poll=(i == 0))
+                    waveform = self._read_channel_data(
+                        ch, poll=(i == 0),
+                        trigger_sample=trigger_sample,
+                    )
                     if waveform:
+                        # On the trigger source channel, detect the
+                        # crossing and remember it for other channels.
+                        if ch == trig_ch and trigger_sample is None:
+                            trigger_sample = find_trigger_crossing(
+                                waveform.voltage,
+                                self._trigger_level,
+                                self._trigger_slope,
+                            )
+                            if trigger_sample is not None:
+                                # Rebuild this channel's time axis with
+                                # the detected trigger position.
+                                waveform.time_axis = make_time_axis(
+                                    len(waveform.raw_adc),
+                                    self._t_per_div,
+                                    trigger_sample=trigger_sample,
+                                )
+
                         self.waveform_ready.emit(waveform)
                 except SerialBridgeError as e:
                     self.error_occurred.emit(f"CH{ch} read failed: {e}")
@@ -380,7 +437,8 @@ class AcquisitionWorker(QObject):
         except SerialBridgeError as e:
             self.error_occurred.emit(f"Acquisition failed: {e}")
 
-    def _read_channel_data(self, ch: int, poll: bool = True) -> Optional[WaveformData]:
+    def _read_channel_data(self, ch: int, poll: bool = True,
+                           trigger_sample: int | None = None) -> Optional[WaveformData]:
         """Read waveform data for one channel from the current capture.
 
         Args:
@@ -418,7 +476,14 @@ class AcquisitionWorker(QObject):
                     settings.offset,
                     settings.probe_factor,
                 )
-                time_axis = make_time_axis(len(raw_adc), self._t_per_div)
+
+                # Build time axis — if trigger_sample is known
+                # (from the trigger source channel), all channels
+                # use it so they stay aligned.
+                time_axis = make_time_axis(
+                    len(raw_adc), self._t_per_div,
+                    trigger_sample=trigger_sample,
+                )
 
                 return WaveformData(
                     channel=ch,
