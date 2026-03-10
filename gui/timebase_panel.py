@@ -73,6 +73,9 @@ class TimebasePanel(QGroupBox):
         """Set T/div programmatically."""
         self._tdiv_knob.set_value(value)
         self._t_per_div = value
+        # Update position knob range to match the new T/div
+        max_pos = 5 * value  # ±5 divisions
+        self._pos_knob.set_range(-max_pos, max_pos, value / 10, self._position)
 
     def set_position(self, value: float):
         """Set position programmatically."""

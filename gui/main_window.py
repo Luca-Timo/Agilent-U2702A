@@ -23,17 +23,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gui.theme import (
     NUM_CHANNELS, channel_color, format_tdiv, format_vdiv,
     STATUS_GREEN, STATUS_YELLOW, STATUS_RED, ACCENT_BLUE,
+    VDIV_VALUES, TDIV_VALUES,
 )
 from gui.waveform_widget import WaveformWidget
 from gui.channel_panel import ChannelPanel
 from gui.timebase_panel import TimebasePanel
 from gui.trigger_panel import TriggerPanel
+from gui.utility_panel import UtilityPanel
 from gui.measurement_bar import MeasurementBar
 from gui.acquisition_worker import AcquisitionWorker
 from gui.connection_dialog import ConnectionDialog
 from gui.settings_dialog import SettingsDialog
 from processing.waveform import WaveformData
 from processing import measurements
+from processing.autoscale import pick_vdiv, pick_tdiv, compute_center_offset
 
 
 class StatusIndicator(QLabel):
@@ -194,6 +197,7 @@ class MainWindow(QMainWindow):
         self._is_running = False
         self._scpi_tester = None
         self._channel_colors: dict[int, str] = {}
+        self._last_waveforms: dict[int, WaveformData] = {}
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -377,7 +381,12 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(4, 0, 4, 0)
         right_layout.setSpacing(6)
 
-        # Keysight layout order (top to bottom):
+        # Right panel layout order (top to bottom):
+        # 0. Utility (Autoscale, measurements toggle, placeholders)
+        self._utility_panel = UtilityPanel()
+        self._utility_panel.set_autoscale_enabled(False)
+        right_layout.addWidget(self._utility_panel)
+
         # 1. Horizontal (T/div + Position knobs side by side)
         self._timebase_panel = TimebasePanel()
         right_layout.addWidget(self._timebase_panel)
@@ -474,6 +483,12 @@ class MainWindow(QMainWindow):
             lambda v: self.sig_set_trigger_coupling.emit(v)
         )
 
+        # --- Utility panel ---
+        self._utility_panel.autoscale_requested.connect(self._on_autoscale)
+        self._utility_panel.measurement_bar_toggled.connect(
+            self._measurement_bar.setVisible
+        )
+
     # --- Toolbar actions ---
 
     def _on_run(self):
@@ -545,6 +560,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_waveform_ready(self, waveform: WaveformData):
         """Handle new waveform data from worker."""
+        self._last_waveforms[waveform.channel] = waveform  # Cache for autoscale
         self._waveform.update_waveform(waveform)
 
         # Compute and display measurements
@@ -633,6 +649,7 @@ class MainWindow(QMainWindow):
         self._bridge = bridge
         self.sig_set_bridge.emit(bridge)
         self._status_indicator.set_status("CONNECTED")
+        self._utility_panel.set_autoscale_enabled(True)
         self.statusBar().showMessage(
             f"Connected: {bridge.port} — Initializing..."
         )
@@ -649,6 +666,8 @@ class MainWindow(QMainWindow):
             self._bridge.close()
             self._bridge = None
 
+        self._utility_panel.set_autoscale_enabled(False)
+        self._last_waveforms.clear()
         self._status_indicator.set_status("DISCONNECTED")
         self.statusBar().showMessage("Disconnected")
 
@@ -691,6 +710,54 @@ class MainWindow(QMainWindow):
         """Handle channel color change from settings."""
         self._channel_colors[ch] = color
         self._waveform.set_channel_color(ch, color)
+
+    # --- Autoscale ---
+
+    def _on_autoscale(self):
+        """Software autoscale — analyze cached waveforms and adjust settings."""
+        if not self._last_waveforms:
+            self.statusBar().showMessage(
+                "Autoscale: No waveform data — run acquisition first", 3000
+            )
+            return
+
+        best_tdiv = None
+
+        for ch, wf in self._last_waveforms.items():
+            # 1. Pick V/div based on Vpp
+            signal_vpp = measurements.vpp(wf.voltage)
+            new_vdiv = pick_vdiv(signal_vpp, VDIV_VALUES)
+
+            # 2. Center the signal vertically
+            new_offset = compute_center_offset(wf.voltage)
+
+            # 3. Apply to instrument + GUI
+            self._channel_panel.set_channel_state(
+                ch, v_per_div=new_vdiv, offset=new_offset
+            )
+            self.sig_set_vdiv.emit(ch, new_vdiv)
+            self.sig_set_offset.emit(ch, new_offset)
+            self._waveform.set_channel_offset(ch, new_offset)
+
+            # 4. Pick T/div from first channel with detectable frequency
+            if best_tdiv is None:
+                freq = measurements.frequency(wf.voltage, wf.time_axis)
+                candidate = pick_tdiv(freq, TDIV_VALUES)
+                if candidate is not None:
+                    best_tdiv = candidate
+
+        # Apply T/div (shared across all channels)
+        if best_tdiv is not None:
+            self._timebase_panel.set_tdiv(best_tdiv)
+            self.sig_set_tdiv.emit(best_tdiv)
+
+        # Update waveform widget scaling
+        active_ch = self._channel_panel._active_channel
+        ch_st = self._channel_panel.get_state(active_ch)
+        tdiv = best_tdiv if best_tdiv else self._timebase_panel.t_per_div
+        self._waveform.set_scales(ch_st.v_per_div, tdiv)
+
+        self.statusBar().showMessage("Autoscale complete", 2000)
 
     # --- About ---
 

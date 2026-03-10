@@ -1,14 +1,14 @@
 """
-Measurement display bar — shows live measurements below the waveform.
+Measurement display bar — table layout with column headers and aligned values.
 
-Top row: measurement toggle buttons (select which measurements to display).
-Below: one row per enabled channel showing active measurements.
+Top row: measurement toggle buttons (select which columns to display).
+Below: table with header row + one row per enabled channel.
 """
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy,
-    QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QFrame, QSizePolicy, QPushButton,
 )
 
 from gui.theme import (
@@ -17,19 +17,22 @@ from gui.theme import (
 )
 
 
-# Available measurement types and their display config
+# Available measurement types: (display_name, dict_key, format_func)
 MEASUREMENT_TYPES = [
-    ("Vpp",   "vpp",       format_voltage),
-    ("Vmin",  "vmin",      format_voltage),
-    ("Vmax",  "vmax",      format_voltage),
-    ("Vrms",  "vrms",      format_voltage),
-    ("Vmean", "vmean",     format_voltage),
-    ("Freq",  "frequency", format_frequency),
-    ("Period","period",     format_time),
+    ("Vpp",    "vpp",       format_voltage),
+    ("Vmin",   "vmin",      format_voltage),
+    ("Vmax",   "vmax",      format_voltage),
+    ("Vrms",   "vrms",      format_voltage),
+    ("Vmean",  "vmean",     format_voltage),
+    ("Freq",   "frequency", format_frequency),
+    ("Period", "period",    format_time),
 ]
 
 # Measurements enabled by default
 DEFAULT_ENABLED = {"Vpp", "Vmin", "Vmax", "Freq", "Period"}
+
+# Column width for measurement values (monospace characters)
+COL_MIN_WIDTH = 90
 
 
 class MeasurementButton(QPushButton):
@@ -66,76 +69,17 @@ class MeasurementButton(QPushButton):
             )
 
 
-class MeasurementRow(QFrame):
-    """Single channel measurement row."""
-
-    def __init__(self, channel: int, parent=None):
-        super().__init__(parent)
-        self._channel = channel
-        self._color = channel_color(channel)
-
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            f"MeasurementRow {{ border: 1px solid {self._color}40; "
-            f"border-radius: 3px; padding: 2px; }}"
-        )
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 2, 6, 2)
-        layout.setSpacing(12)
-
-        # Channel label
-        ch_label = QLabel(f"CH{channel}")
-        ch_label.setStyleSheet(
-            f"color: {self._color}; font-weight: bold; font-size: 11px;"
-        )
-        ch_label.setFixedWidth(35)
-        layout.addWidget(ch_label)
-
-        # Measurement value labels — one for each measurement type
-        self._labels: dict[str, QLabel] = {}
-        for display_name, _, _ in MEASUREMENT_TYPES:
-            lbl = QLabel(f"{display_name}: ---")
-            lbl.setStyleSheet(
-                f"color: {TEXT_SECONDARY}; font-size: 11px; "
-                "font-family: Menlo, monospace;"
-            )
-            self._labels[display_name] = lbl
-            layout.addWidget(lbl)
-
-        layout.addStretch()
-
-    def set_measurement_visible(self, name: str, visible: bool):
-        """Show or hide a specific measurement label."""
-        if name in self._labels:
-            self._labels[name].setVisible(visible)
-
-    def update_measurements(self, meas: dict):
-        """Update measurement display.
-
-        Args:
-            meas: Dict from processing.measurements.compute_all()
-        """
-        for display_name, key, fmt_func in MEASUREMENT_TYPES:
-            lbl = self._labels.get(display_name)
-            if lbl is None:
-                continue
-            val = meas.get(key)
-            if val is not None:
-                lbl.setText(f"{display_name}: {fmt_func(val)}")
-            else:
-                lbl.setText(f"{display_name}: ---")
-
-    def clear(self):
-        """Reset all measurements to ---."""
-        for display_name, _, _ in MEASUREMENT_TYPES:
-            lbl = self._labels.get(display_name)
-            if lbl:
-                lbl.setText(f"{display_name}: ---")
-
-
 class MeasurementBar(QWidget):
-    """Measurement display bar with toggle buttons and per-channel rows.
+    """Measurement display bar — table with header + per-channel value rows.
+
+    Layout:
+        [Meas: [Vpp] [Vmin] [Vmax] [Vrms] [Vmean] [Freq] [Period]  ]
+        ┌──────┬──────────┬──────────┬──────────┬──────────┬──────────┐
+        │      │   Vpp    │   Vmin   │   Vmax   │   Freq   │  Period  │
+        ├──────┼──────────┼──────────┼──────────┼──────────┼──────────┤
+        │ CH1  │  3.12 V  │ -312 mV  │  2.81 V  │ 1.00 kHz │ 995 µs  │
+        │ CH2  │  312 mV  │ -31.2 mV │  281 mV  │ 1.00 kHz │ 995 µs  │
+        └──────┴──────────┴──────────┴──────────┴──────────┴──────────┘
 
     Signals:
         measurement_toggled(str, bool) — measurement type toggled on/off
@@ -146,15 +90,28 @@ class MeasurementBar(QWidget):
     def __init__(self, num_channels: int = NUM_CHANNELS, parent=None):
         super().__init__(parent)
         self._num_channels = num_channels
-        self._rows: dict[int, MeasurementRow] = {}
         self._buttons: dict[str, MeasurementButton] = {}
         self._enabled_measurements: set[str] = set(DEFAULT_ENABLED)
 
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(2)
+        # Header labels (one per measurement type)
+        self._header_labels: dict[str, QLabel] = {}
+        # Value labels: _value_labels[channel][display_name] = QLabel
+        self._value_labels: dict[int, dict[str, QLabel]] = {}
+        # Channel label + row frame for visibility toggling
+        self._channel_labels: dict[int, QLabel] = {}
+        self._channel_visible: dict[int, bool] = {}
 
-        # --- Measurement toggle buttons row ---
+        self._build_ui()
+
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Minimum)
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+
+        # --- Toggle buttons row ---
         btn_frame = QFrame()
         btn_frame.setStyleSheet(
             "QFrame { border: 1px solid #333333; border-radius: 3px; "
@@ -181,20 +138,80 @@ class MeasurementBar(QWidget):
             btn_layout.addWidget(btn)
 
         btn_layout.addStretch()
-        self._layout.addWidget(btn_frame)
+        outer.addWidget(btn_frame)
 
-        # --- Per-channel measurement rows ---
-        for ch in range(1, num_channels + 1):
-            row = MeasurementRow(ch)
-            row.setVisible(False)
-            self._rows[ch] = row
-            self._layout.addWidget(row)
+        # --- Measurement table (grid) ---
+        table_frame = QFrame()
+        table_frame.setStyleSheet(
+            "QFrame { border: 1px solid #333333; border-radius: 3px; }"
+        )
+        self._table_frame = table_frame
+
+        grid = QGridLayout(table_frame)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        self._grid = grid
+
+        # Column 0 = channel label, columns 1..N = measurement values
+        # Row 0 = header, rows 1..M = channels
+
+        # Header row — column 0 is empty
+        spacer = QLabel("")
+        spacer.setFixedWidth(50)
+        spacer.setStyleSheet("border: none;")
+        grid.addWidget(spacer, 0, 0)
+
+        for col_idx, (display_name, _, _) in enumerate(MEASUREMENT_TYPES):
+            lbl = QLabel(display_name)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignRight
+                             | Qt.AlignmentFlag.AlignVCenter)
+            lbl.setMinimumWidth(COL_MIN_WIDTH)
+            lbl.setStyleSheet(
+                "color: #888888; font-size: 10px; font-weight: bold; "
+                "font-family: Menlo, monospace; "
+                "border: none; border-bottom: 1px solid #333333; "
+                "padding: 2px 8px;"
+            )
+            self._header_labels[display_name] = lbl
+            grid.addWidget(lbl, 0, col_idx + 1)
+
+        # Channel value rows
+        for ch in range(1, self._num_channels + 1):
+            row_idx = ch  # row 0 = header, row 1 = CH1, row 2 = CH2, ...
+            color = channel_color(ch)
+
+            # Channel label in column 0
+            ch_lbl = QLabel(f"  CH{ch}")
+            ch_lbl.setFixedWidth(50)
+            ch_lbl.setStyleSheet(
+                f"color: {color}; font-weight: bold; font-size: 11px; "
+                "border: none; padding: 2px 4px;"
+            )
+            self._channel_labels[ch] = ch_lbl
+            grid.addWidget(ch_lbl, row_idx, 0)
+
+            # Value labels for each measurement type
+            self._value_labels[ch] = {}
+            for col_idx, (display_name, _, _) in enumerate(MEASUREMENT_TYPES):
+                val_lbl = QLabel("---")
+                val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight
+                                     | Qt.AlignmentFlag.AlignVCenter)
+                val_lbl.setMinimumWidth(COL_MIN_WIDTH)
+                val_lbl.setStyleSheet(
+                    f"color: {color}; font-size: 11px; "
+                    "font-family: Menlo, monospace; "
+                    "border: none; padding: 2px 8px;"
+                )
+                self._value_labels[ch][display_name] = val_lbl
+                grid.addWidget(val_lbl, row_idx, col_idx + 1)
+
+            self._channel_visible[ch] = False
+
+        outer.addWidget(table_frame)
 
         # Apply initial visibility
-        self._apply_measurement_visibility()
-
-        self.setSizePolicy(QSizePolicy.Policy.Expanding,
-                           QSizePolicy.Policy.Minimum)
+        self._apply_column_visibility()
+        self._apply_row_visibility()
 
     def _on_measurement_toggled(self, name: str, checked: bool):
         """Handle measurement button toggle."""
@@ -202,33 +219,68 @@ class MeasurementBar(QWidget):
             self._enabled_measurements.add(name)
         else:
             self._enabled_measurements.discard(name)
-        self._apply_measurement_visibility()
+        self._apply_column_visibility()
         self.measurement_toggled.emit(name, checked)
 
-    def _apply_measurement_visibility(self):
-        """Update visibility of measurement labels in all rows."""
-        for row in self._rows.values():
-            for display_name, _, _ in MEASUREMENT_TYPES:
-                row.set_measurement_visible(
-                    display_name, display_name in self._enabled_measurements
+    def _apply_column_visibility(self):
+        """Show/hide entire columns (header + all channel values)."""
+        for display_name, _, _ in MEASUREMENT_TYPES:
+            visible = display_name in self._enabled_measurements
+            # Header
+            self._header_labels[display_name].setVisible(visible)
+            # All channel values
+            for ch in range(1, self._num_channels + 1):
+                self._value_labels[ch][display_name].setVisible(visible)
+
+    def _apply_row_visibility(self):
+        """Show/hide channel rows and the entire table frame."""
+        any_visible = False
+        for ch in range(1, self._num_channels + 1):
+            visible = self._channel_visible.get(ch, False)
+            self._channel_labels[ch].setVisible(visible)
+            for lbl in self._value_labels[ch].values():
+                lbl.setVisible(
+                    visible and self._find_display_name(lbl) in self._enabled_measurements
                 )
+            if visible:
+                any_visible = True
+        self._table_frame.setVisible(any_visible)
+
+    def _find_display_name(self, lbl: QLabel) -> str:
+        """Find the display_name for a value label (reverse lookup)."""
+        for ch_labels in self._value_labels.values():
+            for name, l in ch_labels.items():
+                if l is lbl:
+                    return name
+        return ""
 
     def set_channel_visible(self, channel: int, visible: bool):
         """Show or hide a channel's measurement row."""
-        if channel in self._rows:
-            self._rows[channel].setVisible(visible)
+        self._channel_visible[channel] = visible
+        self._apply_row_visibility()
 
     def update_measurements(self, channel: int, meas: dict):
         """Update measurements for a channel."""
-        if channel in self._rows:
-            self._rows[channel].update_measurements(meas)
+        if channel not in self._value_labels:
+            return
+        for display_name, key, fmt_func in MEASUREMENT_TYPES:
+            lbl = self._value_labels[channel].get(display_name)
+            if lbl is None:
+                continue
+            val = meas.get(key)
+            if val is not None:
+                lbl.setText(fmt_func(val))
+            else:
+                lbl.setText("---")
 
     def clear_channel(self, channel: int):
         """Clear measurements for a channel."""
-        if channel in self._rows:
-            self._rows[channel].clear()
+        if channel not in self._value_labels:
+            return
+        for lbl in self._value_labels[channel].values():
+            lbl.setText("---")
 
     def clear_all(self):
         """Clear all measurement displays."""
-        for row in self._rows.values():
-            row.clear()
+        for ch in self._value_labels:
+            self.clear_channel(ch)
