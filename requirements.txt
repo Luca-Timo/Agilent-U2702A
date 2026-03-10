@@ -13,6 +13,9 @@ pyvisa>=1.13
 pyvisa-py>=0.7
 pyusb>=1.2
 
+# Serial communication (ESP32-S3 bridge)
+pyserial>=3.5
+
 # Data processing
 numpy>=1.24
 scipy>=1.10

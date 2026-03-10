@@ -11,11 +11,13 @@
 
 static const char *TAG = "bridge";
 
-/* UART config for serial bridge (UART1, separate from console UART0) */
+/* UART config for serial bridge.
+ * Use UART1 routed to CP2102N pins via GPIO matrix — avoids any
+ * residual UART0 console driver conflicts. */
 #define BRIDGE_UART_NUM  UART_NUM_1
 #define BRIDGE_BAUD      2000000
-#define BRIDGE_TX_PIN    17
-#define BRIDGE_RX_PIN    18
+#define BRIDGE_TX_PIN    43
+#define BRIDGE_RX_PIN    44
 #define BRIDGE_BUF_SIZE  4096
 
 /* Max SCPI command line length */
@@ -53,7 +55,26 @@ static void send_binary_response(const uint8_t *data, int len)
     header[3] = (len >> 16) & 0xFF;
     header[4] = (len >> 24) & 0xFF;
     uart_write_bytes(BRIDGE_UART_NUM, header, 5);
-    uart_write_bytes(BRIDGE_UART_NUM, data, len);
+
+    /*
+     * Send payload in small chunks with explicit delays.
+     * The CP2102N has a 576-byte RX FIFO and no HW flow control
+     * on the devkit.  At 2 Mbps the ESP32 can flood the FIFO faster
+     * than USB Full-Speed bulk can drain it.  256-byte chunks with
+     * 2 ms gaps keep the FIFO from overflowing.
+     *
+     * Throughput: ~256 B / 3.3 ms ≈ 78 KB/s — enough for 30 fps
+     * dual-channel waveforms (~80 KB/s).
+     */
+    #define TX_CHUNK  256
+    int off = 0;
+    while (off < len) {
+        int n = (len - off > TX_CHUNK) ? TX_CHUNK : (len - off);
+        uart_write_bytes(BRIDGE_UART_NUM, data + off, n);
+        uart_wait_tx_done(BRIDGE_UART_NUM, pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(2));
+        off += n;
+    }
 }
 
 /**
@@ -143,10 +164,11 @@ void serial_bridge_task(void *arg)
     send_status("READY");
     ESP_LOGI(TAG, "Device ready, accepting SCPI commands");
 
-    /* Command buffer */
-    char cmd_buf[CMD_MAX_LEN];
+    /* Command and response buffers — static to avoid stack overflow
+     * (CMD_MAX_LEN + RESP_MAX_LEN = 5120 bytes, exceeds task stack) */
+    static char cmd_buf[CMD_MAX_LEN];
+    static uint8_t resp_buf[RESP_MAX_LEN];
     int cmd_pos = 0;
-    uint8_t resp_buf[RESP_MAX_LEN];
 
     while (1) {
         /* Check if device is still connected */

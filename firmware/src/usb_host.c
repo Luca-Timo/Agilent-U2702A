@@ -1,5 +1,4 @@
 #include "usb_host.h"
-#include "u2702a_boot.h"
 #include "usbtmc.h"
 #include "led.h"
 
@@ -143,26 +142,13 @@ static void handle_device_connected(uint8_t dev_addr)
     }
 
     if (pid == PID_BOOT) {
-        /* Boot-mode device — send boot sequence */
-        ESP_LOGI(TAG, "U2702A in boot mode (PID 0x2818)");
-        g_dev_state = DEV_STATE_BOOT_MODE;
-        led_set_state(LED_BOOTING);
-
-        g_dev_state = DEV_STATE_BOOTING;
-        int ret = u2702a_boot(s_client_handle, g_dev_handle);
-
-        /* Close device — it will re-enumerate as PID 0x2918 */
+        /* Boot-mode device should have been handled in Phase 1 (HCD boot).
+         * If we see it here, something went wrong. */
+        ESP_LOGW(TAG, "U2702A still in boot mode! HCD boot may have failed.");
         usb_host_device_close(s_client_handle, g_dev_handle);
         g_dev_handle = NULL;
-
-        if (ret == 0) {
-            ESP_LOGI(TAG, "Boot sequence sent, waiting for re-enumeration...");
-            g_dev_state = DEV_STATE_OPERATIONAL;
-        } else {
-            ESP_LOGE(TAG, "Boot sequence failed");
-            g_dev_state = DEV_STATE_ERROR;
-            led_set_state(LED_ERROR);
-        }
+        g_dev_state = DEV_STATE_ERROR;
+        led_set_state(LED_ERROR);
 
     } else if (pid == PID_OPERATIONAL) {
         /* Operational device — claim USBTMC interface */

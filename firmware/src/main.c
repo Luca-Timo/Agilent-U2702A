@@ -4,9 +4,13 @@
  * Architecture:
  *   Mac <-- UART/CP2102N (2Mbps) --> ESP32-S3 <-- USB OTG Host --> U2702A
  *
- * Three FreeRTOS tasks:
+ * Two-phase approach:
+ *   Phase 1: HCD direct boot (bypass broken enumeration of PID 0x2818)
+ *   Phase 2: USB Host library for USBTMC communication with PID 0x2918
+ *
+ * Three FreeRTOS tasks (Phase 2):
  *   1. USB Host daemon  — pumps usb_host_lib_handle_events()
- *   2. USB client       — device connect/disconnect, boot sequence, USBTMC claim
+ *   2. USB client       — device connect/disconnect, USBTMC interface claim
  *   3. Serial bridge    — UART RX/TX, SCPI command dispatch
  */
 
@@ -17,6 +21,7 @@
 #include "freertos/semphr.h"
 #include "usb/usb_host.h"
 
+#include "u2702a_boot.h"
 #include "usb_host.h"
 #include "usbtmc.h"
 #include "serial_bridge.h"
@@ -26,8 +31,8 @@ static const char *TAG = "main";
 
 /* Stack sizes */
 #define USB_DAEMON_STACK  4096
-#define USB_CLIENT_STACK  4096
-#define SERIAL_STACK      4096
+#define USB_CLIENT_STACK  6144
+#define SERIAL_STACK      6144
 
 void app_main(void)
 {
@@ -37,10 +42,31 @@ void app_main(void)
     led_init();
     led_set_state(LED_NO_DEVICE);
 
-    /* Semaphore: USB client signals serial bridge when device is ready */
+    /*
+     * Phase 1: Boot the oscilloscope using HCD directly.
+     * The boot-mode firmware (PID 0x2818) has an invalid config descriptor,
+     * so we can't use the USB Host library for this phase.
+     */
+    ESP_LOGI(TAG, "Phase 1: Booting U2702A via HCD...");
+    led_set_state(LED_BOOTING);
+
+    int boot_ret = u2702a_hcd_boot(15000);  /* 15s timeout */
+    if (boot_ret != 0) {
+        ESP_LOGE(TAG, "Boot failed! Device may already be operational or not connected.");
+        /* Continue anyway — the device might already be in operational mode */
+    } else {
+        ESP_LOGI(TAG, "Boot succeeded, waiting for re-enumeration...");
+        vTaskDelay(pdMS_TO_TICKS(2000));  /* Give device time to re-enumerate */
+    }
+
+    /*
+     * Phase 2: Install USB Host library for USBTMC communication.
+     * The device should now be operational (PID 0x2918) with valid descriptors.
+     */
+    ESP_LOGI(TAG, "Phase 2: Starting USB Host for USBTMC...");
+
     SemaphoreHandle_t device_ready_sem = xSemaphoreCreateBinary();
 
-    /* Install USB Host library */
     usb_host_config_t host_config = {
         .skip_phy_setup = false,
         .intr_flags = ESP_INTR_FLAG_LEVEL1,
@@ -64,5 +90,5 @@ void app_main(void)
     xTaskCreatePinnedToCore(serial_bridge_task, "serial_bridge",
                             SERIAL_STACK, device_ready_sem, 3, NULL, 1);
 
-    ESP_LOGI(TAG, "All tasks started. Waiting for U2702A...");
+    ESP_LOGI(TAG, "All tasks started. Waiting for U2702A operational device...");
 }
