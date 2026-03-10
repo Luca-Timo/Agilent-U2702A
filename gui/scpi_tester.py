@@ -311,7 +311,12 @@ class StatusIndicator(QLabel):
 # --- Main Window ---
 
 class SCPITesterWindow(QMainWindow):
-    """SCPI Tester main window."""
+    """SCPI Tester main window.
+
+    Can be used standalone or with a shared SerialBridge from the main window.
+    When a bridge is provided, the connection bar is hidden and the shared
+    bridge is used directly.
+    """
 
     # Signals to worker (cross-thread)
     sig_connect = Signal(str, int)
@@ -319,13 +324,14 @@ class SCPITesterWindow(QMainWindow):
     sig_send = Signal(str)
     sig_batch = Signal(list)
 
-    def __init__(self):
+    def __init__(self, bridge=None):
         super().__init__()
         self.setWindowTitle("SCPI Tester - Agilent U2702A")
         self.setMinimumSize(700, 500)
         self.resize(850, 700)
 
         self._is_connected = False
+        self._shared_bridge = bridge
 
         # Worker + thread
         self._worker = SerialWorker()
@@ -336,7 +342,16 @@ class SCPITesterWindow(QMainWindow):
 
         # Build UI
         self._build_ui()
-        self._refresh_ports()
+
+        if bridge and bridge.is_open:
+            # Use shared bridge — auto-connect, hide connection bar
+            self._conn_widget.setVisible(False)
+            self._worker._bridge = bridge
+            self._is_connected = True
+            self._on_connected()
+            self._on_status_changed("SHARED")
+        else:
+            self._refresh_ports()
 
     def _connect_signals(self):
         """Wire up signal/slot connections between GUI and worker."""
@@ -361,8 +376,10 @@ class SCPITesterWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setSpacing(6)
 
-        # --- Connection bar ---
-        conn_layout = QHBoxLayout()
+        # --- Connection bar (hidden when using shared bridge) ---
+        self._conn_widget = QWidget()
+        conn_layout = QHBoxLayout(self._conn_widget)
+        conn_layout.setContentsMargins(0, 0, 0, 0)
 
         conn_layout.addWidget(QLabel("Port:"))
         self._port_combo = QComboBox()
@@ -389,7 +406,7 @@ class SCPITesterWindow(QMainWindow):
         self._status_indicator = StatusIndicator()
         conn_layout.addWidget(self._status_indicator)
 
-        layout.addLayout(conn_layout)
+        layout.addWidget(self._conn_widget)
 
         # --- Quick command buttons ---
         btn_group = QGroupBox("Quick Commands")
@@ -548,8 +565,11 @@ class SCPITesterWindow(QMainWindow):
         self._log.log_info("Disconnected")
 
     def closeEvent(self, event):
-        """Clean shutdown: stop worker thread."""
-        if self._is_connected:
+        """Clean shutdown: stop worker thread.
+
+        When using shared bridge, do NOT disconnect — the main window owns it.
+        """
+        if self._is_connected and not self._shared_bridge:
             self.sig_disconnect.emit()
         self._thread.quit()
         self._thread.wait(2000)

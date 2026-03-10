@@ -1,6 +1,7 @@
 #--- General ---
 .DS_Store
 .venv/
+venv/
 
 #--- Altium Designer ---
 # Various Altium files

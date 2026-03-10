@@ -2,8 +2,8 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.1.0-alpha
-> Last updated: 2026-03-04
+> Current version: 0.2.1-alpha
+> Last updated: 2026-03-10
 
 ---
 
@@ -18,35 +18,47 @@
 
 ---
 
-## 0.1.x-alpha -- Foundation & Connection
+## 0.1.x-alpha -- Foundation & Connection ✅
 
 **Goal**: Establish USB communication with U2702A and display waveforms.
 
-- [ ] Project scaffolding (PySide6 app skeleton)
-- [ ] Hardware abstraction layer (separate communication from analysis)
-- [ ] USB connection to U2702A via pyvisa-py
-- [ ] SCPI command protocol layer (from sniffed commands)
-- [ ] Basic 2-channel waveform display (PyQtGraph)
-- [ ] Run / Stop / Single acquisition
-- [ ] Status bar (connection state, sample rate)
+- [x] Project scaffolding (PySide6 app skeleton)
+- [x] Hardware abstraction layer (separate communication from analysis)
+- [x] USB connection via ESP32-S3 bridge (replaced pyvisa-py)
+- [x] SCPI command protocol layer (from sniffed commands)
+- [x] SCPI Tester GUI (send/receive commands, binary waveform display)
+- [x] Serial bridge client (thread-safe, binary protocol)
+- [x] Status bar (connection state)
 
-**Milestone**: Can connect to scope and see live waveforms on screen.
+**Milestone**: Full SCPI round-trip working — text ~1ms, binary waveforms ~39ms.
 
 ---
 
-## 0.2.x-alpha -- Controls & Scaling
+## 0.2.x-alpha -- Controls, Scaling & Trigger ← CURRENT
 
-**Goal**: Full oscilloscope control panel.
+**Goal**: Full oscilloscope GUI with controls, scaling, trigger, and measurements.
 
-- [ ] Vertical scale (V/div) per channel
-- [ ] Horizontal scale (T/div)
-- [ ] Channel enable/disable
-- [ ] Channel coupling (AC/DC)
-- [ ] Vertical offset per channel
-- [ ] Horizontal position/offset
-- [ ] Graticule overlay (scope grid)
+- [x] Keysight-style front panel layout (graph left, controls right)
+- [x] Custom rotary knob widget (drag-to-turn + click-to-edit popup)
+- [x] Vertical scale (V/div) per channel via knob
+- [x] Horizontal scale (T/div) via knob
+- [x] Channel enable/disable (N-channel scalable architecture)
+- [x] Channel coupling (AC/DC) dropdown
+- [x] Vertical offset per channel via knob
+- [x] Horizontal position via knob
+- [x] Graticule overlay (scope grid)
+- [x] Edge trigger controls (level knob, source, slope, sweep, coupling)
+- [x] Basic measurements (Vpp, Vmin, Vmax, frequency, period)
+- [x] Connection dialog (separate window)
+- [x] Settings dialog (channel colors, probe attenuation)
+- [x] SCPI Tester accessible from Tools menu (shared connection)
+- [x] Dark theme (Fusion style)
+- [x] Measurement toggle buttons (Vpp, Vmin, Vmax, Vrms, Vmean, Freq, Period)
+- [x] Per-channel GND/0V markers on Y-axis (arrow + channel number)
+- [x] Trigger position marker on X-axis (▼ triangle)
+- [x] Larger default window size (1440×900)
 
-**Milestone**: Can adjust all basic scope settings from the GUI.
+**Milestone**: Can control all scope settings from the GUI and see live waveforms.
 
 ---
 
