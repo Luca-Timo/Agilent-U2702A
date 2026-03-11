@@ -20,6 +20,7 @@ class WaveformData:
     t_per_div: float        # T/div setting used
     probe_factor: float     # Probe attenuation (1 or 10)
     timestamp: float        # time.monotonic() when acquired
+    trigger_sample: int | None = None  # Sample index where trigger crossed
 
 
 # --- U2702A waveform data format ---

@@ -54,6 +54,7 @@ class WaveformWidget(pg.PlotWidget):
         # Per-channel GND marker state (single TextItem badge per channel)
         self._gnd_markers: dict[int, pg.TextItem] = {}
         self._channel_offsets: dict[int, float] = {}
+        self._enabled_channels: set[int] = set()
 
         # Horizontal position (view offset from position knob)
         self._h_position: float = 0.0
@@ -66,7 +67,11 @@ class WaveformWidget(pg.PlotWidget):
         self._trigger_pos_marker: pg.ScatterPlotItem | None = None
         self._trigger_level_line: pg.InfiniteLine | None = None
         self._trigger_level_badge: pg.TextItem | None = None
-        self._trigger_slope_badge: pg.TextItem | None = None
+
+        # Trigger crossing marker (on the waveform trace itself)
+        self._trigger_crossing_dot: pg.ScatterPlotItem | None = None
+        self._trigger_crossing_label: pg.TextItem | None = None
+        self._trigger_crossing_ch: int | None = None  # Which channel owns the marker
 
         # Drag state: None, 'trigger_level', 'trigger_pos', or ('offset', ch)
         self._dragging: str | tuple | None = None
@@ -186,12 +191,25 @@ class WaveformWidget(pg.PlotWidget):
         )
         self.addItem(self._trigger_level_badge)
 
-        # --- Trigger slope icon (right edge, above trigger badge) ---
-        self._trigger_slope_badge = pg.TextItem(
-            html=self._slope_icon_html(self._trigger_slope),
-            anchor=(1.0, 1.0),  # Right-aligned, bottom-anchored (sits above badge)
+        # --- Trigger crossing marker (on the waveform trace) ---
+        # Bright dot at the exact crossing point
+        self._trigger_crossing_dot = pg.ScatterPlotItem(
+            pos=np.array([[0.0, 0.0]]),
+            symbol='o',
+            size=10,
+            pen=pg.mkPen('#ffffff', width=2),
+            brush=pg.mkBrush(TRIGGER_COLOR),
         )
-        self.addItem(self._trigger_slope_badge)
+        self._trigger_crossing_dot.setVisible(False)
+        self.addItem(self._trigger_crossing_dot)
+
+        # Slope arrow label next to the crossing point
+        self._trigger_crossing_label = pg.TextItem(
+            html=self._crossing_label_html(self._trigger_slope),
+            anchor=(0.0, 1.0),  # Left-aligned, bottom-anchored (sits above+right)
+        )
+        self._trigger_crossing_label.setVisible(False)
+        self.addItem(self._trigger_crossing_label)
 
     @staticmethod
     def _trigger_badge_html(level: float) -> str:
@@ -212,28 +230,23 @@ class WaveformWidget(pg.PlotWidget):
         )
 
     @staticmethod
-    def _slope_icon_html(slope: str) -> str:
-        """Generate HTML for the trigger slope icon badge.
-
-        Shows a step-edge icon matching the trigger slope direction:
-        POS: rising edge ⌊‾   NEG: falling edge ‾⌋
-        EITH: both ↕          ALT: alternating ⇅
-        """
+    def _crossing_label_html(slope: str) -> str:
+        """Generate HTML for the trigger crossing label on the waveform."""
         icons = {
-            "POS": "╱",     # Rising edge
-            "NEG": "╲",     # Falling edge
-            "EITH": "↕",    # Either edge
-            "ALT": "⇅",     # Alternating
+            "POS": "↗",
+            "NEG": "↘",
+            "EITH": "↕",
+            "ALT": "⇅",
         }
-        icon = icons.get(slope, "╱")
+        icon = icons.get(slope, "↗")
         return (
             f'<div style="'
-            f'background-color: {TRIGGER_COLOR};'
+            f'background-color: rgba(255,68,68,0.85);'
             f'color: #ffffff;'
-            f'border: 1px solid {TRIGGER_COLOR};'
-            f'border-radius: 2px;'
-            f'padding: 1px 4px;'
-            f'font-size: 14px;'
+            f'border: 2px solid #ffffff;'
+            f'border-radius: 3px;'
+            f'padding: 0px 4px;'
+            f'font-size: 16px;'
             f'font-weight: bold;'
             f'font-family: Menlo, monospace;'
             f'text-align: center;'
@@ -301,12 +314,6 @@ class WaveformWidget(pg.PlotWidget):
             right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
             self._trigger_level_badge.setPos(right_x, screen_y)
 
-        if self._trigger_slope_badge is not None:
-            right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
-            # Position the slope icon slightly above the trigger level line
-            offset_y = 0.35 * self._v_per_div
-            self._trigger_slope_badge.setPos(right_x, screen_y + offset_y)
-
     # --- Public API ---
 
     def set_scales(self, v_per_div: float, t_per_div: float):
@@ -336,19 +343,30 @@ class WaveformWidget(pg.PlotWidget):
 
     def set_channel_enabled(self, channel: int, enabled: bool):
         """Show or hide a channel trace and its GND marker."""
-        if enabled and channel not in self._traces:
-            # Create trace
-            color = self._colors.get(channel, channel_color(channel))
-            trace = self.plot([], [], pen=pg.mkPen(color=color, width=1.5))
-            self._traces[channel] = trace
-            # Create GND marker
-            self._create_gnd_marker(channel)
-        elif not enabled and channel in self._traces:
-            # Remove trace
-            self.removeItem(self._traces[channel])
-            del self._traces[channel]
-            # Remove GND marker
-            self._remove_gnd_marker(channel)
+        if enabled:
+            self._enabled_channels.add(channel)
+            if channel not in self._traces:
+                # Create trace
+                color = self._colors.get(channel, channel_color(channel))
+                trace = self.plot([], [], pen=pg.mkPen(color=color, width=1.5))
+                self._traces[channel] = trace
+                # Create GND marker
+                self._create_gnd_marker(channel)
+        else:
+            self._enabled_channels.discard(channel)
+            if channel in self._traces:
+                # Remove trace
+                self.removeItem(self._traces[channel])
+                del self._traces[channel]
+                # Remove GND marker
+                self._remove_gnd_marker(channel)
+            # Hide trigger crossing marker if it belongs to this channel
+            if self._trigger_crossing_ch == channel:
+                self._trigger_crossing_ch = None
+                if self._trigger_crossing_dot is not None:
+                    self._trigger_crossing_dot.setVisible(False)
+                if self._trigger_crossing_label is not None:
+                    self._trigger_crossing_label.setVisible(False)
 
     def set_channel_offset(self, channel: int, offset: float):
         """Update a channel's offset — moves its GND marker on the Y-axis."""
@@ -372,14 +390,12 @@ class WaveformWidget(pg.PlotWidget):
         self._update_trigger_level_position()
 
     def set_trigger_slope(self, slope: str):
-        """Update the trigger slope indicator icon on the graph.
+        """Update the trigger slope (used by crossing label on the trace).
 
         Args:
             slope: One of "POS", "NEG", "EITH", "ALT"
         """
         self._trigger_slope = slope
-        if self._trigger_slope_badge is not None:
-            self._trigger_slope_badge.setHtml(self._slope_icon_html(slope))
 
     def set_trigger_source_offset(self, offset: float):
         """Set the trigger source channel's vertical offset.
@@ -398,6 +414,10 @@ class WaveformWidget(pg.PlotWidget):
         """
         ch = waveform.channel
 
+        # Ignore data for disabled channels (queued signals can arrive late)
+        if ch not in self._enabled_channels:
+            return
+
         # Auto-create trace if not exists
         if ch not in self._traces:
             color = self._colors.get(ch, channel_color(ch))
@@ -406,6 +426,56 @@ class WaveformWidget(pg.PlotWidget):
             self._create_gnd_marker(ch)
 
         self._traces[ch].setData(waveform.time_axis, waveform.voltage)
+
+        # Show trigger crossing marker on the trigger source channel.
+        # Only the trigger source waveform has trigger_sample set.
+        idx = waveform.trigger_sample
+        if (idx is not None
+                and 0 <= idx < len(waveform.time_axis) - 1):
+            # Interpolate between sample[idx] and sample[idx+1] to find
+            # the exact point where voltage = trigger level.  The crossing
+            # happens BETWEEN these two samples.
+            v0 = waveform.voltage[idx]
+            v1 = waveform.voltage[idx + 1]
+            t0 = waveform.time_axis[idx]
+            t1 = waveform.time_axis[idx + 1]
+            dv = v1 - v0
+            if abs(dv) > 1e-12:
+                # The screen-space trigger level (with offset baked in)
+                screen_level = self._trigger_level + self._trigger_source_offset
+                frac = (screen_level - v0) / dv
+                frac = max(0.0, min(1.0, frac))  # clamp
+                cross_t = t0 + frac * (t1 - t0)
+                cross_v = screen_level
+            else:
+                # Flat segment — place at midpoint
+                cross_t = (t0 + t1) / 2
+                cross_v = (v0 + v1) / 2
+
+            self._trigger_crossing_ch = ch
+            if self._trigger_crossing_dot is not None:
+                self._trigger_crossing_dot.setData(
+                    pos=np.array([[cross_t, cross_v]])
+                )
+                self._trigger_crossing_dot.setVisible(True)
+            if self._trigger_crossing_label is not None:
+                self._trigger_crossing_label.setHtml(
+                    self._crossing_label_html(self._trigger_slope)
+                )
+                # Offset label above and right of the dot
+                label_offset_y = 0.25 * self._v_per_div
+                label_offset_x = 0.15 * self._t_per_div
+                self._trigger_crossing_label.setPos(
+                    cross_t + label_offset_x, cross_v + label_offset_y
+                )
+                self._trigger_crossing_label.setVisible(True)
+        elif idx is None and ch == self._trigger_crossing_ch:
+            # Trigger source channel arrived without crossing (AUTO) — hide
+            self._trigger_crossing_ch = None
+            if self._trigger_crossing_dot is not None:
+                self._trigger_crossing_dot.setVisible(False)
+            if self._trigger_crossing_label is not None:
+                self._trigger_crossing_label.setVisible(False)
 
     def clear_channel(self, channel: int):
         """Clear waveform data for a channel."""

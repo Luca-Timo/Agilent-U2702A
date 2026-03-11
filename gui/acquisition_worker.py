@@ -437,6 +437,7 @@ class AcquisitionWorker(QObject):
                             )
                             if trigger_sample is not None:
                                 self.trigger_status.emit("TRIG'D")
+                                waveform.trigger_sample = trigger_sample
                                 # Rebuild this channel's time axis with
                                 # the detected trigger position.
                                 waveform.time_axis = make_time_axis(

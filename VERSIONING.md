@@ -75,7 +75,8 @@
 - [x] Trigger level adjustment (knob + drag on graph)
 - [x] Trigger mode: Auto / Normal / Single
 - [x] Trigger status indicator (ARMED/TRIG'D/AUTO/READY)
-- [x] Trigger slope indicator on waveform graph
+- [x] Trigger crossing marker on waveform trace (interpolated)
+- [x] Trigger slope indicator in dropdown + at crossing point
 - [x] Trigger coupling (DC/AC/LFR/HFR)
 - [x] Software trigger alignment (crossing detection)
 - [ ] Pulse width trigger (protocol defined, GUI not yet wired)
