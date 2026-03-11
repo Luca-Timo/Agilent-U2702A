@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QApplication, QDialog, QTextEdit,
     QDialogButtonBox, QTabWidget,
 )
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QFont, QShortcut, QKeySequence
 
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -199,6 +199,7 @@ class MainWindow(QMainWindow):
         self._channel_colors: dict[int, str] = {}
         self._last_waveforms: dict[int, WaveformData] = {}
         self._trigger_source: str = "CHAN1"  # Track trigger source for offset
+        self._zoom_undo_stack: list[dict] = []
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -223,6 +224,11 @@ class MainWindow(QMainWindow):
         for ch in self._channel_panel.get_enabled_channels():
             self._waveform.set_channel_enabled(ch, True)
             self._measurement_bar.set_channel_visible(ch, True)
+
+        # Cmd+Z to undo zoom
+        QShortcut(QKeySequence.StandardKey.Undo, self).activated.connect(
+            self._on_undo_zoom
+        )
 
         # Auto-show connection dialog on startup
         QTimer.singleShot(200, self._show_connection_dialog)
@@ -490,6 +496,16 @@ class MainWindow(QMainWindow):
             self._measurement_bar.setVisible
         )
 
+        # --- Waveform zoom + drag ---
+        self._waveform.zoom_requested.connect(self._on_zoom_requested)
+        self._waveform.trigger_level_dragged.connect(
+            self._on_trigger_level_dragged
+        )
+        self._waveform.trigger_pos_dragged.connect(
+            self._on_trigger_pos_dragged
+        )
+        self._waveform.offset_dragged.connect(self._on_offset_dragged)
+
     # --- Toolbar actions ---
 
     def _on_run(self):
@@ -570,6 +586,121 @@ class MainWindow(QMainWindow):
         self.sig_set_channel_enabled.emit(ch, enabled)
         self._waveform.set_channel_enabled(ch, enabled)
         self._measurement_bar.set_channel_visible(ch, enabled)
+
+    def _on_zoom_requested(self, t_min: float, v_min: float,
+                           t_max: float, v_max: float):
+        """Handle drag-to-zoom rectangle from waveform widget."""
+        # Push current state for Cmd+Z undo
+        ch = self._channel_panel._active_channel
+        ch_state = self._channel_panel.get_state(ch)
+        self._zoom_undo_stack.append({
+            'tdiv': self._timebase_panel.t_per_div,
+            'h_position': self._timebase_panel.position,
+            'channel': ch,
+            'vdiv': ch_state.v_per_div,
+            'offset': ch_state.offset,
+        })
+        if len(self._zoom_undo_stack) > 20:
+            self._zoom_undo_stack.pop(0)
+
+        time_range = t_max - t_min
+        volt_range = v_max - v_min
+
+        # Snap T/div: smallest TDIV where full display >= selected range
+        num_h = WaveformWidget.NUM_H_DIVS
+        new_tdiv = TDIV_VALUES[-1]
+        for tdiv in TDIV_VALUES:
+            if num_h * tdiv >= time_range:
+                new_tdiv = tdiv
+                break
+
+        # Snap V/div: smallest VDIV where full display >= selected range
+        num_v = WaveformWidget.NUM_V_DIVS
+        new_vdiv = VDIV_VALUES[-1]
+        for vdiv in VDIV_VALUES:
+            if num_v * vdiv >= volt_range:
+                new_vdiv = vdiv
+                break
+
+        # H position: center of selected time range
+        new_h_pos = (t_min + t_max) / 2
+
+        # V offset (active channel): shift so selection is centered at y=0
+        new_offset = -(v_min + v_max) / 2
+
+        # Apply T/div + position
+        self._timebase_panel.set_tdiv(new_tdiv)
+        self.sig_set_tdiv.emit(new_tdiv)
+        self._timebase_panel.set_position(new_h_pos)
+        self.sig_set_position.emit(new_h_pos)
+
+        # Apply V/div + offset (active channel)
+        ch = self._channel_panel._active_channel
+        self._channel_panel.set_channel_state(
+            ch, v_per_div=new_vdiv, offset=new_offset
+        )
+        self._channel_panel._states[ch].v_per_div = new_vdiv
+        self._channel_panel._states[ch].offset = new_offset
+        self.sig_set_vdiv.emit(ch, new_vdiv)
+        self.sig_set_offset.emit(ch, new_offset)
+
+        # Update waveform display
+        self._waveform.set_scales(new_vdiv, new_tdiv)
+        self._waveform.set_h_position(new_h_pos)
+        self._waveform.set_channel_offset(ch, new_offset)
+
+        # Update trigger line if this is the trigger source
+        if self._trigger_source == f"CHAN{ch}":
+            self._waveform.set_trigger_source_offset(new_offset)
+
+    def _on_undo_zoom(self):
+        """Undo the last zoom operation (Cmd+Z)."""
+        if not self._zoom_undo_stack:
+            self.statusBar().showMessage("Nothing to undo", 2000)
+            return
+
+        snap = self._zoom_undo_stack.pop()
+        ch = snap['channel']
+
+        # Restore T/div + position
+        self._timebase_panel.set_tdiv(snap['tdiv'])
+        self.sig_set_tdiv.emit(snap['tdiv'])
+        self._timebase_panel.set_position(snap['h_position'])
+        self.sig_set_position.emit(snap['h_position'])
+
+        # Restore V/div + offset
+        self._channel_panel.set_channel_state(
+            ch, v_per_div=snap['vdiv'], offset=snap['offset']
+        )
+        self.sig_set_vdiv.emit(ch, snap['vdiv'])
+        self.sig_set_offset.emit(ch, snap['offset'])
+
+        # Update waveform display
+        self._waveform.set_scales(snap['vdiv'], snap['tdiv'])
+        self._waveform.set_h_position(snap['h_position'])
+        self._waveform.set_channel_offset(ch, snap['offset'])
+
+        if self._trigger_source == f"CHAN{ch}":
+            self._waveform.set_trigger_source_offset(snap['offset'])
+
+        self.statusBar().showMessage("Zoom undone", 1500)
+
+    def _on_trigger_level_dragged(self, level: float):
+        """Handle trigger level dragged on the waveform graph."""
+        self._trigger_panel.set_level(level)
+        self.sig_set_trigger_level.emit(level)
+
+    def _on_trigger_pos_dragged(self, h_pos: float):
+        """Handle trigger position marker dragged on the graph."""
+        self._timebase_panel.set_position(h_pos)
+        self.sig_set_position.emit(h_pos)
+
+    def _on_offset_dragged(self, ch: int, offset: float):
+        """Handle channel GND marker dragged on the graph."""
+        self._channel_panel.set_channel_state(ch, offset=offset)
+        self.sig_set_offset.emit(ch, offset)
+        if self._trigger_source == f"CHAN{ch}":
+            self._waveform.set_trigger_source_offset(offset)
 
     # --- Worker callbacks ---
 

@@ -7,8 +7,9 @@ Per-channel GND markers on Y-axis, trigger level + position indicators.
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import Qt, Signal, QPointF, QRectF, QRect, QPoint
+from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter
+from PySide6.QtWidgets import QRubberBand
 
 from gui.theme import (
     BG_PLOT, GRID_COLOR, TEXT_DIM, ACCENT_BLUE,
@@ -31,6 +32,18 @@ class WaveformWidget(pg.PlotWidget):
     NUM_H_DIVS = 10   # Horizontal divisions
     NUM_V_DIVS = 8    # Vertical divisions
 
+    # Emitted when user finishes a drag-to-zoom rectangle
+    # Args: t_min, v_min, t_max, v_max (data coordinates)
+    zoom_requested = Signal(float, float, float, float)
+
+    # Emitted continuously while user drags markers on the graph
+    trigger_level_dragged = Signal(float)   # new trigger level (voltage)
+    trigger_pos_dragged = Signal(float)     # new h_position (seconds)
+    offset_dragged = Signal(int, float)     # channel, new offset (voltage)
+
+    MIN_DRAG_PX = 10  # Minimum pixel drag to trigger zoom
+    _HIT_THRESHOLD_PX = 8  # Pixel proximity for marker hit detection
+
     def __init__(self, num_channels: int = NUM_CHANNELS, parent=None):
         super().__init__(parent=parent, background=BG_PLOT)
 
@@ -52,6 +65,15 @@ class WaveformWidget(pg.PlotWidget):
         self._trigger_pos_marker: pg.ScatterPlotItem | None = None
         self._trigger_level_line: pg.InfiniteLine | None = None
         self._trigger_level_badge: pg.TextItem | None = None
+
+        # Drag state: None, 'trigger_level', 'trigger_pos', or ('offset', ch)
+        self._dragging: str | tuple | None = None
+        self._drag_prev_px: QPoint | None = None  # for pixel-delta approach
+
+        # Drag-to-zoom state (uses QRubberBand — a plain widget overlay,
+        # completely outside the PyQtGraph scene to avoid any artifacts)
+        self._zoom_origin: QPoint | None = None
+        self._rubber_band: QRubberBand | None = None
 
         # Default colors
         for ch in range(1, num_channels + 1):
@@ -76,15 +98,27 @@ class WaveformWidget(pg.PlotWidget):
         plot.hideAxis('bottom')
         plot.hideAxis('left')
 
-        # Disable mouse interaction (knobs control scaling)
+        # Disable all mouse interaction — knobs and drag-to-zoom handle it
         plot.setMouseEnabled(x=False, y=False)
         plot.setMenuEnabled(False)
+        self.setDragMode(self.DragMode.NoDrag)
+        # Fully disable ViewBox mouse interaction — we handle everything
+        # ourselves via drag-to-zoom.  PyQtGraph has its own event system
+        # (mouseDragEvent / mouseClickEvent) on top of Qt's, so we must
+        # disable at multiple layers to prevent its rubber-band overlay.
+        vb = plot.getViewBox()
+        vb.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        vb.mouseDragEvent = lambda ev, axis=None: None
+        vb.mouseClickEvent = lambda ev: None
+        # Remove the built-in rubber-band scale box completely
+        if vb.rbScaleBox is not None:
+            vb.removeItem(vb.rbScaleBox)
+            vb.rbScaleBox = None
         self.setMouseTracking(False)
 
         # CRITICAL: Disable auto-range — we set axis range manually
         # via knobs. Without this, PyQtGraph auto-ranges on each data
         # update, which overrides our T/div and V/div scaling.
-        vb = plot.getViewBox()
         vb.enableAutoRange(axis='xy', enable=False)
         vb.setDefaultPadding(0)
 
@@ -328,6 +362,166 @@ class WaveformWidget(pg.PlotWidget):
         """Clear all waveform data."""
         for trace in self._traces.values():
             trace.setData([], [])
+
+    # --- Coordinate conversion helpers ---
+
+    def _data_to_widget_y(self, y_data: float) -> float:
+        """Convert a Y data coordinate to widget pixel Y."""
+        vb = self.getPlotItem().getViewBox()
+        scene_pt = vb.mapViewToScene(QPointF(0, y_data))
+        return self.mapFromScene(scene_pt).y()
+
+    def _data_to_widget_x(self, x_data: float) -> float:
+        """Convert an X data coordinate to widget pixel X."""
+        vb = self.getPlotItem().getViewBox()
+        scene_pt = vb.mapViewToScene(QPointF(x_data, 0))
+        return self.mapFromScene(scene_pt).x()
+
+    def _widget_to_data(self, widget_point: QPoint) -> QPointF:
+        """Convert widget pixel coordinates to data coordinates."""
+        vb = self.getPlotItem().getViewBox()
+        return vb.mapSceneToView(self.mapToScene(widget_point))
+
+    # --- Drag interactions (markers + zoom) ---
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint()
+            px_x = pos.x()
+            px_y = pos.y()
+            th = self._HIT_THRESHOLD_PX
+
+            # 1. Trigger level line (Y proximity anywhere on X)
+            trig_screen_y = self._trigger_level + self._trigger_source_offset
+            trig_level_py = self._data_to_widget_y(trig_screen_y)
+            if abs(px_y - trig_level_py) < th:
+                self._dragging = 'trigger_level'
+                self.setCursor(Qt.CursorShape.SizeVerCursor)
+                event.accept()
+                return
+
+            # 2. Trigger position ▼ marker (near top edge)
+            trig_pos_px = self._data_to_widget_x(self._trigger_pos)
+            top_y = (self.NUM_V_DIVS / 2) * self._v_per_div
+            marker_py = self._data_to_widget_y(top_y)
+            if abs(px_x - trig_pos_px) < th and abs(px_y - marker_py) < th * 3:
+                self._dragging = 'trigger_pos'
+                self._drag_prev_px = pos
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+                event.accept()
+                return
+
+            # 3. GND markers (left edge badges)
+            left_x = self._h_position - (self.NUM_H_DIVS / 2) * self._t_per_div
+            left_px = self._data_to_widget_x(left_x)
+            for ch in self._gnd_markers:
+                offset = self._channel_offsets.get(ch, 0.0)
+                marker_py = self._data_to_widget_y(offset)
+                if abs(px_x - left_px) < th * 4 and abs(px_y - marker_py) < th * 2:
+                    self._dragging = ('offset', ch)
+                    self.setCursor(Qt.CursorShape.SizeVerCursor)
+                    event.accept()
+                    return
+
+            # 4. Default: start zoom rectangle
+            self._zoom_origin = pos
+
+        # Never forward mouse presses to PyQtGraph
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
+
+        # --- Marker drag handling ---
+        if self._dragging == 'trigger_level':
+            data_pt = self._widget_to_data(pos)
+            new_level = data_pt.y() - self._trigger_source_offset
+            self._trigger_level = new_level
+            self._update_trigger_level_position()
+            if self._trigger_level_badge is not None:
+                self._trigger_level_badge.setHtml(
+                    self._trigger_badge_html(new_level)
+                )
+            self.trigger_level_dragged.emit(new_level)
+            event.accept()
+            return
+
+        if self._dragging == 'trigger_pos':
+            # Pixel-delta approach: shift h_position by how far mouse moved
+            dx_px = pos.x() - self._drag_prev_px.x()
+            self._drag_prev_px = pos
+            vb = self.getPlotItem().getViewBox()
+            view_range = vb.viewRange()
+            x_span = view_range[0][1] - view_range[0][0]
+            data_delta = dx_px * (x_span / self.viewport().width())
+            self._h_position -= data_delta
+            self._update_axis_range()
+            self.trigger_pos_dragged.emit(self._h_position)
+            event.accept()
+            return
+
+        if isinstance(self._dragging, tuple) and self._dragging[0] == 'offset':
+            ch = self._dragging[1]
+            data_pt = self._widget_to_data(pos)
+            new_offset = data_pt.y()
+            self._channel_offsets[ch] = new_offset
+            self._update_gnd_positions()
+            self.offset_dragged.emit(ch, new_offset)
+            event.accept()
+            return
+
+        # --- Zoom rubber band ---
+        if self._zoom_origin is not None:
+            dx = pos.x() - self._zoom_origin.x()
+            dy = pos.y() - self._zoom_origin.y()
+            if abs(dx) >= self.MIN_DRAG_PX or abs(dy) >= self.MIN_DRAG_PX:
+                if self._rubber_band is None:
+                    self._rubber_band = QRubberBand(
+                        QRubberBand.Shape.Rectangle, self.viewport()
+                    )
+                self._rubber_band.setGeometry(
+                    QRect(self._zoom_origin, pos).normalized()
+                )
+                self._rubber_band.show()
+
+        # Never forward mouse moves to PyQtGraph
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # End marker drag
+            if self._dragging is not None:
+                self._dragging = None
+                self._drag_prev_px = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+                event.accept()
+                return
+
+            # End zoom rectangle
+            if self._zoom_origin is not None:
+                pos = event.position().toPoint()
+                dx = pos.x() - self._zoom_origin.x()
+                dy = pos.y() - self._zoom_origin.y()
+
+                if self._rubber_band is not None:
+                    self._rubber_band.hide()
+                    self._rubber_band.deleteLater()
+                    self._rubber_band = None
+
+                if abs(dx) >= self.MIN_DRAG_PX or abs(dy) >= self.MIN_DRAG_PX:
+                    vb = self.getPlotItem().getViewBox()
+                    p1 = vb.mapSceneToView(self.mapToScene(self._zoom_origin))
+                    p2 = vb.mapSceneToView(self.mapToScene(pos))
+                    t_min = min(p1.x(), p2.x())
+                    t_max = max(p1.x(), p2.x())
+                    v_min = min(p1.y(), p2.y())
+                    v_max = max(p1.y(), p2.y())
+                    self.zoom_requested.emit(t_min, v_min, t_max, v_max)
+
+                self._zoom_origin = None
+
+        # Never forward mouse releases to PyQtGraph
+        event.accept()
 
     # --- GND marker helpers ---
 

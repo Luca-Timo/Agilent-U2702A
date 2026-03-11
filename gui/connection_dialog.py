@@ -19,6 +19,7 @@ from instrument.serial_bridge import (
     SerialBridge, list_serial_ports, DEFAULT_BAUDRATE,
     BridgeTimeoutError, SerialBridgeError,
 )
+from instrument.demo_bridge import DemoBridge
 
 
 class ConnectionDialog(QDialog):
@@ -105,6 +106,19 @@ class ConnectionDialog(QDialog):
 
         # --- Buttons ---
         btn_layout = QHBoxLayout()
+
+        self._demo_btn = QPushButton("Demo Signal")
+        self._demo_btn.setFixedWidth(120)
+        self._demo_btn.setFixedHeight(36)
+        self._demo_btn.setStyleSheet(
+            "QPushButton { background-color: #50c878; color: white; "
+            "font-weight: bold; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #60d888; }"
+            "QPushButton:pressed { background-color: #40b868; }"
+        )
+        self._demo_btn.clicked.connect(self._on_demo)
+        btn_layout.addWidget(self._demo_btn)
+
         btn_layout.addStretch()
 
         self._connect_btn = QPushButton("Connect")
@@ -152,6 +166,16 @@ class ConnectionDialog(QDialog):
         self._status_log.append(
             f'<span style="color: {color};">{text}</span>'
         )
+
+    def _on_demo(self):
+        """Connect with a synthetic demo signal generator."""
+        self._log("Starting demo signal generator...", "#50c878")
+        bridge = DemoBridge()
+        bridge.open()
+        self._bridge = bridge
+        self._log("Demo signal ready (1 kHz 3.3 V PWM)", "#50c878")
+        self.connection_established.emit(bridge)
+        self.accept()
 
     def _on_connect(self):
         """Handle connect button click."""
