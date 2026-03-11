@@ -5,7 +5,7 @@ Top row: measurement toggle buttons (select which columns to display).
 Below: table with header row + one row per enabled channel.
 """
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QFrame, QSizePolicy, QPushButton,
@@ -90,6 +90,11 @@ class MeasurementBar(QWidget):
 
     measurement_toggled = Signal(str, bool)
 
+    # Emitted when user hovers a value cell: (channel, display_name, raw_meas_dict)
+    value_hovered = Signal(int, str, dict)
+    # Emitted when hover leaves a value cell
+    value_unhovered = Signal()
+
     def __init__(self, num_channels: int = NUM_CHANNELS, parent=None):
         super().__init__(parent)
         self._num_channels = num_channels
@@ -103,6 +108,9 @@ class MeasurementBar(QWidget):
         # Channel label + row frame for visibility toggling
         self._channel_labels: dict[int, QLabel] = {}
         self._channel_visible: dict[int, bool] = {}
+
+        # Raw measurement values per channel (for hover cursors)
+        self._last_measurements: dict[int, dict] = {}
 
         self._build_ui()
 
@@ -205,6 +213,11 @@ class MeasurementBar(QWidget):
                     "font-family: Menlo, monospace; "
                     "border: none; padding: 2px 8px;"
                 )
+                # Store channel + measurement name for hover lookup
+                val_lbl.setProperty("meas_ch", ch)
+                val_lbl.setProperty("meas_name", display_name)
+                val_lbl.setMouseTracking(True)
+                val_lbl.installEventFilter(self)
                 self._value_labels[ch][display_name] = val_lbl
                 grid.addWidget(val_lbl, row_idx, col_idx + 1)
 
@@ -262,10 +275,26 @@ class MeasurementBar(QWidget):
         self._channel_visible[channel] = visible
         self._apply_row_visibility()
 
+    def eventFilter(self, obj, event):
+        """Detect hover enter/leave on measurement value labels."""
+        if event.type() == QEvent.Type.Enter:
+            ch = obj.property("meas_ch")
+            name = obj.property("meas_name")
+            if ch is not None and name is not None:
+                meas = self._last_measurements.get(ch, {})
+                if meas:
+                    self.value_hovered.emit(ch, name, meas)
+            return False
+        if event.type() == QEvent.Type.Leave:
+            self.value_unhovered.emit()
+            return False
+        return super().eventFilter(obj, event)
+
     def update_measurements(self, channel: int, meas: dict):
         """Update measurements for a channel."""
         if channel not in self._value_labels:
             return
+        self._last_measurements[channel] = dict(meas)
         for display_name, key, fmt_func in MEASUREMENT_TYPES:
             lbl = self._value_labels[channel].get(display_name)
             if lbl is None:
@@ -280,10 +309,12 @@ class MeasurementBar(QWidget):
         """Clear measurements for a channel."""
         if channel not in self._value_labels:
             return
+        self._last_measurements.pop(channel, None)
         for lbl in self._value_labels[channel].values():
             lbl.setText("---")
 
     def clear_all(self):
         """Clear all measurement displays."""
+        self._last_measurements.clear()
         for ch in self._value_labels:
             self.clear_channel(ch)

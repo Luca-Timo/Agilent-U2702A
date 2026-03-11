@@ -89,6 +89,9 @@ class WaveformWidget(pg.PlotWidget):
         self._time_cursor_badges: list[pg.TextItem | None] = [None, None]
         self._volt_cursor_badges: list[pg.TextItem | None] = [None, None]
 
+        # Measurement hover highlight lines (temporary, shown on hover)
+        self._highlight_lines: list[pg.InfiniteLine] = []
+
         # Drag state: None, 'trigger_level', 'trigger_pos', ('offset', ch),
         #             ('cursor_time', 0/1), ('cursor_volt', 0/1)
         self._dragging: str | tuple | None = None
@@ -574,6 +577,35 @@ class WaveformWidget(pg.PlotWidget):
             self._volt_cursor_lines[cursor_id].setPos(value)
         self._update_cursor_positions()
         self.cursor_moved.emit("voltage", cursor_id + 1, value)
+
+    def show_measurement_highlight(self, h_lines: list[float],
+                                    v_lines: list[float],
+                                    color: str = "#ffffff"):
+        """Show temporary dashed highlight lines on the plot.
+
+        Used when hovering over a measurement value to visualize it.
+
+        Args:
+            h_lines: Y-positions for horizontal highlight lines (voltages).
+            v_lines: X-positions for vertical highlight lines (times).
+            color: Line color (defaults to white).
+        """
+        self.hide_measurement_highlight()  # Remove any previous
+        pen = pg.mkPen(color, width=1.0, style=Qt.PenStyle.DashLine)
+        for y in h_lines:
+            line = pg.InfiniteLine(pos=y, angle=0, pen=pen)
+            self.addItem(line)
+            self._highlight_lines.append(line)
+        for x in v_lines:
+            line = pg.InfiniteLine(pos=x, angle=90, pen=pen)
+            self.addItem(line)
+            self._highlight_lines.append(line)
+
+    def hide_measurement_highlight(self):
+        """Remove all measurement highlight lines."""
+        for line in self._highlight_lines:
+            self.removeItem(line)
+        self._highlight_lines.clear()
 
     def update_waveform(self, waveform: WaveformData):
         """Update a channel's waveform display.

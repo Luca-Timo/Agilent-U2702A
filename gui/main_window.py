@@ -67,7 +67,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.4.0-alpha"
+APP_VERSION = "0.4.1-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -538,6 +538,14 @@ class MainWindow(QMainWindow):
             self._on_cursor_mode_changed
         )
 
+        # --- Measurement hover → highlight lines ---
+        self._measurement_bar.value_hovered.connect(
+            self._on_measurement_hovered
+        )
+        self._measurement_bar.value_unhovered.connect(
+            self._waveform.hide_measurement_highlight
+        )
+
     # --- Toolbar actions ---
 
     def _on_run(self):
@@ -663,6 +671,59 @@ class MainWindow(QMainWindow):
             self._cursor_readout.update_volt_cursors(
                 self._volt_cursors[1], self._volt_cursors[2]
             )
+
+    def _on_measurement_hovered(self, ch: int, display_name: str, meas: dict):
+        """Show highlight lines on waveform when hovering a measurement value.
+
+        Maps each measurement type to the appropriate horizontal/vertical
+        lines to visualize what's being measured.
+        """
+        color = self._channel_colors.get(ch, channel_color(ch))
+        h_lines: list[float] = []   # horizontal (voltage) lines
+        v_lines: list[float] = []   # vertical (time) lines
+
+        v_min = meas.get("vmin")
+        v_max = meas.get("vmax")
+
+        if display_name == "Vpp":
+            if v_min is not None:
+                h_lines.append(v_min)
+            if v_max is not None:
+                h_lines.append(v_max)
+        elif display_name == "Vmin":
+            if v_min is not None:
+                h_lines.append(v_min)
+        elif display_name == "Vmax":
+            if v_max is not None:
+                h_lines.append(v_max)
+        elif display_name == "Vrms":
+            v = meas.get("vrms")
+            if v is not None:
+                h_lines.append(v)
+        elif display_name == "Vmean":
+            v = meas.get("vmean")
+            if v is not None:
+                h_lines.append(v)
+        elif display_name in ("Freq", "Period"):
+            period = meas.get("period")
+            if period is not None:
+                # Show one period centered on trigger (t=0)
+                v_lines.append(-period / 2)
+                v_lines.append(period / 2)
+        elif display_name in ("Rise", "Fall"):
+            # Show 10% and 90% threshold levels used by the algorithm
+            if v_min is not None and v_max is not None:
+                amplitude = v_max - v_min
+                if amplitude > 1e-9:
+                    h_lines.append(v_min + 0.1 * amplitude)  # 10%
+                    h_lines.append(v_min + 0.9 * amplitude)  # 90%
+        elif display_name == "Duty":
+            # Show midpoint threshold used by duty cycle algorithm
+            if v_min is not None and v_max is not None:
+                h_lines.append((v_min + v_max) / 2)
+
+        if h_lines or v_lines:
+            self._waveform.show_measurement_highlight(h_lines, v_lines, color)
 
     def _on_zoom_requested(self, t_min: float, v_min: float,
                            t_max: float, v_max: float):

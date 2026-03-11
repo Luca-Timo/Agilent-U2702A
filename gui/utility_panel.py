@@ -4,13 +4,10 @@ Utility panel — Autoscale, measurement bar toggle, cursor controls.
 Sits at the top of the right sidebar, above HORIZONTAL / TRIGGER / VERTICAL.
 """
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
-    QComboBox,
-)
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QPushButton
 
-from gui.theme import ACCENT_BLUE, TEXT_SECONDARY
+from gui.theme import ACCENT_BLUE
 
 
 class UtilityPanel(QGroupBox):
@@ -26,9 +23,18 @@ class UtilityPanel(QGroupBox):
     measurement_bar_toggled = Signal(bool)
     cursor_mode_changed = Signal(str)
 
+    # Carousel: Off → Both → X Only → Y Only → Off …
+    _CURSOR_MODES = [
+        ("off",      "Cursors: OFF"),
+        ("both",     "Cursors: X+Y"),
+        ("time",     "Cursors: X"),
+        ("voltage",  "Cursors: Y"),
+    ]
+
     def __init__(self, parent=None):
         super().__init__("UTILITY", parent)
         self._meas_visible = True
+        self._cursor_idx = 0  # index into _CURSOR_MODES
         self._setup_ui()
 
     def _setup_ui(self):
@@ -58,33 +64,15 @@ class UtilityPanel(QGroupBox):
         self._meas_btn.clicked.connect(self._on_meas_toggled)
         layout.addWidget(self._meas_btn)
 
-        # --- Separator ---
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #333333;")
-        layout.addWidget(separator)
-
-        # --- Cursor controls ---
-        cursor_row = QHBoxLayout()
-        cursor_row.setSpacing(6)
-
-        cursor_label = QLabel("Cursors:")
-        cursor_label.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 11px; font-weight: bold;"
+        # --- Cursor carousel button ---
+        mode, label = self._CURSOR_MODES[0]
+        self._cursor_btn = QPushButton(label)
+        self._cursor_btn.setFixedHeight(28)
+        self._cursor_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; }"
         )
-        cursor_row.addWidget(cursor_label)
-
-        self._cursor_combo = QComboBox()
-        self._cursor_combo.addItem("Off", "off")
-        self._cursor_combo.addItem("Time", "time")
-        self._cursor_combo.addItem("Voltage", "voltage")
-        self._cursor_combo.addItem("Both", "both")
-        self._cursor_combo.setFixedHeight(26)
-        self._cursor_combo.currentIndexChanged.connect(self._on_cursor_changed)
-        cursor_row.addWidget(self._cursor_combo)
-
-        cursor_row.addStretch()
-        layout.addLayout(cursor_row)
+        self._cursor_btn.clicked.connect(self._on_cursor_clicked)
+        layout.addWidget(self._cursor_btn)
 
     def _on_autoscale(self):
         self.autoscale_requested.emit()
@@ -95,10 +83,11 @@ class UtilityPanel(QGroupBox):
         self._meas_btn.setText(f"Measurements: {text}")
         self.measurement_bar_toggled.emit(self._meas_visible)
 
-    def _on_cursor_changed(self, index: int):
-        mode = self._cursor_combo.itemData(index)
-        if mode:
-            self.cursor_mode_changed.emit(mode)
+    def _on_cursor_clicked(self):
+        self._cursor_idx = (self._cursor_idx + 1) % len(self._CURSOR_MODES)
+        mode, label = self._CURSOR_MODES[self._cursor_idx]
+        self._cursor_btn.setText(label)
+        self.cursor_mode_changed.emit(mode)
 
     # --- Public API ---
 
