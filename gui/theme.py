@@ -122,6 +122,11 @@ def format_frequency(value: float) -> str:
     return format_si(value, "Hz")
 
 
+def format_percent(value: float) -> str:
+    """Format a percentage value (e.g. duty cycle)."""
+    return f"{value:.1f}%"
+
+
 def channel_color(ch: int) -> str:
     """Get default color for channel number (1-indexed)."""
     idx = (ch - 1) % len(DEFAULT_CHANNEL_COLORS)

@@ -20,6 +20,9 @@ from processing.waveform import WaveformData
 # Trigger marker color
 TRIGGER_COLOR = "#FF4444"
 
+# Cursor colors
+CURSOR_COLOR = "#FF8800"  # Orange — distinct from red trigger and gray grid
+
 
 class WaveformWidget(pg.PlotWidget):
     """Real-time waveform display with graticule overlay.
@@ -40,6 +43,10 @@ class WaveformWidget(pg.PlotWidget):
     trigger_level_dragged = Signal(float)   # new trigger level (voltage)
     trigger_pos_dragged = Signal(float)     # new h_position (seconds)
     offset_dragged = Signal(int, float)     # channel, new offset (voltage)
+
+    # Emitted when user drags a measurement cursor
+    # Args: cursor_type ("time"/"voltage"), cursor_id (1 or 2), new_value
+    cursor_moved = Signal(str, int, float)
 
     MIN_DRAG_PX = 10  # Minimum pixel drag to trigger zoom
     _HIT_THRESHOLD_PX = 8  # Pixel proximity for marker hit detection
@@ -73,7 +80,17 @@ class WaveformWidget(pg.PlotWidget):
         self._trigger_crossing_label: pg.TextItem | None = None
         self._trigger_crossing_ch: int | None = None  # Which channel owns the marker
 
-        # Drag state: None, 'trigger_level', 'trigger_pos', or ('offset', ch)
+        # Cursor state
+        self._cursor_mode: str = "off"  # "off", "time", "voltage", "both"
+        self._time_cursors: list[float] = [0.0, 0.0]   # [t1, t2] in seconds
+        self._volt_cursors: list[float] = [0.0, 0.0]   # [v1, v2] in volts
+        self._time_cursor_lines: list[pg.InfiniteLine | None] = [None, None]
+        self._volt_cursor_lines: list[pg.InfiniteLine | None] = [None, None]
+        self._time_cursor_badges: list[pg.TextItem | None] = [None, None]
+        self._volt_cursor_badges: list[pg.TextItem | None] = [None, None]
+
+        # Drag state: None, 'trigger_level', 'trigger_pos', ('offset', ch),
+        #             ('cursor_time', 0/1), ('cursor_volt', 0/1)
         self._dragging: str | tuple | None = None
         self._drag_prev_px: QPoint | None = None  # for pixel-delta approach
 
@@ -91,6 +108,7 @@ class WaveformWidget(pg.PlotWidget):
         self._setup_plot()
         self._draw_graticule()
         self._create_trigger_indicators()
+        self._create_cursor_items()
 
         # Initial axis range
         self._v_per_div = 1.0
@@ -283,6 +301,9 @@ class WaveformWidget(pg.PlotWidget):
         self._update_trigger_position()
         self._update_trigger_level_position()
 
+        # Reposition cursor badges at new edges
+        self._update_cursor_positions()
+
     def _update_gnd_positions(self):
         """Reposition all GND markers to the left edge of the plot."""
         left_x = self._h_position - (self.NUM_H_DIVS / 2) * self._t_per_div
@@ -313,6 +334,90 @@ class WaveformWidget(pg.PlotWidget):
         if self._trigger_level_badge is not None:
             right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
             self._trigger_level_badge.setPos(right_x, screen_y)
+
+    # --- Cursor items ---
+
+    def _create_cursor_items(self):
+        """Create measurement cursor lines and edge badges (initially hidden)."""
+        from gui.theme import format_voltage, format_time
+
+        styles = [
+            pg.mkPen(CURSOR_COLOR, width=1.2, style=Qt.PenStyle.SolidLine),
+            pg.mkPen(CURSOR_COLOR, width=1.2, style=Qt.PenStyle.DashDotLine),
+        ]
+
+        for i in range(2):
+            # Time cursors (vertical lines)
+            line = pg.InfiniteLine(pos=0.0, angle=90, pen=styles[i])
+            line.setVisible(False)
+            self.addItem(line)
+            self._time_cursor_lines[i] = line
+
+            badge = pg.TextItem(
+                html=self._cursor_badge_html(f"C{i+1}", "0 s"),
+                anchor=(0.5, 1.0),  # Center-top
+            )
+            badge.setVisible(False)
+            self.addItem(badge)
+            self._time_cursor_badges[i] = badge
+
+            # Voltage cursors (horizontal lines)
+            line = pg.InfiniteLine(pos=0.0, angle=0, pen=styles[i])
+            line.setVisible(False)
+            self.addItem(line)
+            self._volt_cursor_lines[i] = line
+
+            badge = pg.TextItem(
+                html=self._cursor_badge_html(f"C{i+1}", "0 V"),
+                anchor=(1.0, 0.5),  # Right-aligned
+            )
+            badge.setVisible(False)
+            self.addItem(badge)
+            self._volt_cursor_badges[i] = badge
+
+    @staticmethod
+    def _cursor_badge_html(label: str, value: str) -> str:
+        """Generate HTML for a cursor edge badge."""
+        return (
+            f'<div style="'
+            f'background-color: {CURSOR_COLOR};'
+            f'color: #000000;'
+            f'border: 1px solid {CURSOR_COLOR};'
+            f'border-radius: 2px;'
+            f'padding: 1px 4px;'
+            f'font-size: 9px;'
+            f'font-weight: bold;'
+            f'font-family: Menlo, monospace;'
+            f'">{label} {value}</div>'
+        )
+
+    def _update_cursor_positions(self):
+        """Reposition cursor badges at plot edges after axis changes."""
+        from gui.theme import format_time, format_voltage
+
+        top_y = (self.NUM_V_DIVS / 2) * self._v_per_div
+        right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
+
+        for i in range(2):
+            # Time cursor badge at top edge
+            if self._time_cursor_badges[i] is not None:
+                self._time_cursor_badges[i].setPos(self._time_cursors[i], top_y)
+                if self._time_cursor_badges[i].isVisible():
+                    self._time_cursor_badges[i].setHtml(
+                        self._cursor_badge_html(
+                            f"C{i+1}", format_time(self._time_cursors[i])
+                        )
+                    )
+
+            # Voltage cursor badge at right edge
+            if self._volt_cursor_badges[i] is not None:
+                self._volt_cursor_badges[i].setPos(right_x, self._volt_cursors[i])
+                if self._volt_cursor_badges[i].isVisible():
+                    self._volt_cursor_badges[i].setHtml(
+                        self._cursor_badge_html(
+                            f"C{i+1}", format_voltage(self._volt_cursors[i])
+                        )
+                    )
 
     # --- Public API ---
 
@@ -405,6 +510,70 @@ class WaveformWidget(pg.PlotWidget):
         """
         self._trigger_source_offset = offset
         self._update_trigger_level_position()
+
+    def set_cursor_mode(self, mode: str):
+        """Set cursor mode: "off", "time", "voltage", or "both".
+
+        When switching to a new mode, cursors are positioned at ±25%
+        of the visible range for a useful starting point.
+        """
+        old_mode = self._cursor_mode
+        self._cursor_mode = mode
+
+        show_time = mode in ("time", "both")
+        show_volt = mode in ("voltage", "both")
+
+        # Set initial positions when first turning on a cursor type
+        if show_time and old_mode not in ("time", "both"):
+            h_half = (self.NUM_H_DIVS / 2) * self._t_per_div
+            self._time_cursors[0] = self._h_position - 0.25 * h_half
+            self._time_cursors[1] = self._h_position + 0.25 * h_half
+
+        if show_volt and old_mode not in ("voltage", "both"):
+            v_half = (self.NUM_V_DIVS / 2) * self._v_per_div
+            self._volt_cursors[0] = 0.25 * v_half
+            self._volt_cursors[1] = -0.25 * v_half
+
+        for i in range(2):
+            if self._time_cursor_lines[i] is not None:
+                self._time_cursor_lines[i].setVisible(show_time)
+                self._time_cursor_lines[i].setPos(self._time_cursors[i])
+            if self._time_cursor_badges[i] is not None:
+                self._time_cursor_badges[i].setVisible(show_time)
+
+            if self._volt_cursor_lines[i] is not None:
+                self._volt_cursor_lines[i].setVisible(show_volt)
+                self._volt_cursor_lines[i].setPos(self._volt_cursors[i])
+            if self._volt_cursor_badges[i] is not None:
+                self._volt_cursor_badges[i].setVisible(show_volt)
+
+        self._update_cursor_positions()
+
+    def set_time_cursor(self, cursor_id: int, value: float):
+        """Move a time cursor to a new position.
+
+        Args:
+            cursor_id: 0 or 1 (C1 or C2).
+            value: Time position in seconds.
+        """
+        self._time_cursors[cursor_id] = value
+        if self._time_cursor_lines[cursor_id] is not None:
+            self._time_cursor_lines[cursor_id].setPos(value)
+        self._update_cursor_positions()
+        self.cursor_moved.emit("time", cursor_id + 1, value)
+
+    def set_volt_cursor(self, cursor_id: int, value: float):
+        """Move a voltage cursor to a new position.
+
+        Args:
+            cursor_id: 0 or 1 (C1 or C2).
+            value: Voltage position.
+        """
+        self._volt_cursors[cursor_id] = value
+        if self._volt_cursor_lines[cursor_id] is not None:
+            self._volt_cursor_lines[cursor_id].setPos(value)
+        self._update_cursor_positions()
+        self.cursor_moved.emit("voltage", cursor_id + 1, value)
 
     def update_waveform(self, waveform: WaveformData):
         """Update a channel's waveform display.
@@ -547,7 +716,28 @@ class WaveformWidget(pg.PlotWidget):
                     event.accept()
                     return
 
-            # 4. Default: start zoom rectangle
+            # 4. Cursor lines (if visible)
+            if self._cursor_mode in ("time", "both"):
+                for i in range(2):
+                    if self._time_cursor_lines[i] is not None:
+                        cursor_px = self._data_to_widget_x(self._time_cursors[i])
+                        if abs(px_x - cursor_px) < th:
+                            self._dragging = ('cursor_time', i)
+                            self.setCursor(Qt.CursorShape.SizeHorCursor)
+                            event.accept()
+                            return
+
+            if self._cursor_mode in ("voltage", "both"):
+                for i in range(2):
+                    if self._volt_cursor_lines[i] is not None:
+                        cursor_py = self._data_to_widget_y(self._volt_cursors[i])
+                        if abs(px_y - cursor_py) < th:
+                            self._dragging = ('cursor_volt', i)
+                            self.setCursor(Qt.CursorShape.SizeVerCursor)
+                            event.accept()
+                            return
+
+            # 5. Default: start zoom rectangle
             self._zoom_origin = pos
 
         # Never forward mouse presses to PyQtGraph
@@ -591,6 +781,20 @@ class WaveformWidget(pg.PlotWidget):
             self._channel_offsets[ch] = new_offset
             self._update_gnd_positions()
             self.offset_dragged.emit(ch, new_offset)
+            event.accept()
+            return
+
+        if isinstance(self._dragging, tuple) and self._dragging[0] == 'cursor_time':
+            idx = self._dragging[1]
+            data_pt = self._widget_to_data(pos)
+            self.set_time_cursor(idx, data_pt.x())
+            event.accept()
+            return
+
+        if isinstance(self._dragging, tuple) and self._dragging[0] == 'cursor_volt':
+            idx = self._dragging[1]
+            data_pt = self._widget_to_data(pos)
+            self.set_volt_cursor(idx, data_pt.y())
             event.accept()
             return
 

@@ -20,7 +20,7 @@ from gui.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Agilent U2702A Oscilloscope")
-    app.setApplicationVersion("0.3.2-alpha")
+    app.setApplicationVersion("0.4.0-alpha")
 
     apply_dark_theme(app)
 

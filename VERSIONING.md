@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.3.1-alpha
+> Current version: 0.4.0-alpha
 > Last updated: 2026-03-11
 
 ---
@@ -66,7 +66,7 @@
 
 ---
 
-## 0.3.x-alpha -- Trigger System ← CURRENT
+## 0.3.x-alpha -- Trigger System ✅
 
 **Goal**: Functional trigger system.
 
@@ -75,27 +75,31 @@
 - [x] Trigger level adjustment (knob + drag on graph)
 - [x] Trigger mode: Auto / Normal / Single
 - [x] Trigger status indicator (ARMED/TRIG'D/AUTO/READY)
-- [x] Trigger crossing marker on waveform trace (interpolated)
-- [x] Trigger slope indicator in dropdown + at crossing point
+- [x] Trigger crossing marker on waveform trace (interpolated position)
+- [x] Trigger slope indicator (dropdown + crossing label ↗/↘/↕/⇅)
 - [x] Trigger coupling (DC/AC/LFR/HFR)
 - [x] Software trigger alignment (crossing detection)
+- [x] Drag-to-zoom with Cmd+Z undo
 - [ ] Pulse width trigger (protocol defined, GUI not yet wired)
 
 **Milestone**: Stable triggered acquisitions.
 
 ---
 
-## 0.4.x-alpha -- Measurements & Math
+## 0.4.x-alpha -- Measurements & Math ← CURRENT
 
 **Goal**: Automatic measurements and signal analysis.
 
-- [ ] Vpp, Vmax, Vmin measurements
-- [ ] Vrms (AC and DC) measurements
-- [ ] Frequency and period measurements
-- [ ] Rise/fall time measurements
-- [ ] Duty cycle measurement
-- [ ] Measurement display panel
-- [ ] Cursor measurements (time + voltage)
+- [x] Vpp, Vmax, Vmin measurements
+- [x] Vrms (AC and DC) measurements
+- [x] Frequency and period measurements
+- [x] Measurement display panel (toggle buttons + per-channel grid)
+- [x] Rise/fall time measurements (10%/90% threshold interpolation)
+- [x] Duty cycle measurement (midpoint threshold)
+- [x] Cursor measurements (time + voltage, draggable lines + readout bar)
+- [x] Cursor readout panel (ΔT, 1/ΔT, ΔV)
+- [x] Toolbar cleanup (consistent button/indicator sizing)
+- [x] Settings: knob scroll wheel toggle
 
 **Milestone**: All standard oscilloscope measurements working.
 

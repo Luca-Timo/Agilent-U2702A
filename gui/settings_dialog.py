@@ -1,7 +1,7 @@
 """
-Settings dialog — display colors, probe config, connection info.
+Settings dialog — display colors, probe config, controls.
 
-Tabbed dialog: Display, Probes.
+Tabbed dialog: Display, Controls, Probes.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -58,21 +58,26 @@ class SettingsDialog(QDialog):
     Signals:
         channel_color_changed(int, str) — channel color changed
         line_width_changed(int) — waveform line width changed
+        knob_scroll_changed(bool) — knob scroll wheel enabled/disabled
     """
 
     channel_color_changed = Signal(int, str)
     line_width_changed = Signal(int)
+    knob_scroll_changed = Signal(bool)
 
     def __init__(self, num_channels: int = NUM_CHANNELS,
-                 current_colors: dict = None, parent=None):
+                 current_colors: dict = None,
+                 knob_scroll_enabled: bool = True,
+                 parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumSize(400, 300)
-        self.resize(450, 350)
+        self.setMinimumSize(400, 340)
+        self.resize(450, 380)
 
         self._num_channels = num_channels
         self._colors = current_colors or {}
         self._color_buttons: dict[int, ColorButton] = {}
+        self._knob_scroll_enabled = knob_scroll_enabled
 
         self._setup_ui()
 
@@ -128,6 +133,38 @@ class SettingsDialog(QDialog):
         display_layout.addStretch()
         tabs.addTab(display_tab, "Display")
 
+        # --- Controls tab ---
+        controls_tab = QWidget()
+        controls_layout = QVBoxLayout(controls_tab)
+
+        knob_group = QGroupBox("Knob Behavior")
+        knob_layout = QVBoxLayout()
+
+        self._scroll_checkbox = QCheckBox("Enable scroll wheel on knobs")
+        self._scroll_checkbox.setChecked(self._knob_scroll_enabled)
+        self._scroll_checkbox.setToolTip(
+            "When disabled, scroll wheel won't accidentally change\n"
+            "V/div, T/div, or other knob values while scrolling."
+        )
+        self._scroll_checkbox.toggled.connect(self._on_scroll_toggled)
+        knob_layout.addWidget(self._scroll_checkbox)
+
+        scroll_note = QLabel(
+            "Tip: Disabling scroll prevents accidental value changes\n"
+            "when scrolling the control panel. You can still drag\n"
+            "the knob or click to enter a value."
+        )
+        scroll_note.setStyleSheet(
+            "color: #666666; font-size: 10px; padding-top: 4px;"
+        )
+        knob_layout.addWidget(scroll_note)
+
+        knob_group.setLayout(knob_layout)
+        controls_layout.addWidget(knob_group)
+
+        controls_layout.addStretch()
+        tabs.addTab(controls_tab, "Controls")
+
         # --- Probes tab ---
         probe_tab = QWidget()
         probe_layout = QVBoxLayout(probe_tab)
@@ -179,6 +216,10 @@ class SettingsDialog(QDialog):
         self._colors[ch] = color
         self.channel_color_changed.emit(ch, color)
 
+    def _on_scroll_toggled(self, checked: bool):
+        self._knob_scroll_enabled = checked
+        self.knob_scroll_changed.emit(checked)
+
     def get_colors(self) -> dict[int, str]:
         return dict(self._colors)
 
@@ -188,3 +229,6 @@ class SettingsDialog(QDialog):
             text = combo.currentText()
             result[ch] = float(text.replace("x", ""))
         return result
+
+    def is_knob_scroll_enabled(self) -> bool:
+        return self._knob_scroll_enabled

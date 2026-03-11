@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 
 from gui.theme import (
     channel_color, format_voltage, format_frequency, format_time,
-    NUM_CHANNELS, TEXT_SECONDARY, ACCENT_BLUE,
+    format_percent, NUM_CHANNELS, TEXT_SECONDARY, ACCENT_BLUE,
 )
 
 
@@ -26,6 +26,9 @@ MEASUREMENT_TYPES = [
     ("Vmean",  "vmean",     format_voltage),
     ("Freq",   "frequency", format_frequency),
     ("Period", "period",    format_time),
+    ("Rise",   "rise_time", format_time),
+    ("Fall",   "fall_time", format_time),
+    ("Duty",   "duty_cycle", format_percent),
 ]
 
 # Measurements enabled by default

@@ -31,6 +31,7 @@ from gui.timebase_panel import TimebasePanel
 from gui.trigger_panel import TriggerPanel
 from gui.utility_panel import UtilityPanel
 from gui.measurement_bar import MeasurementBar
+from gui.cursor_readout import CursorReadout
 from gui.acquisition_worker import AcquisitionWorker
 from gui.connection_dialog import ConnectionDialog
 from gui.settings_dialog import SettingsDialog
@@ -57,15 +58,16 @@ class StatusIndicator(QLabel):
             "STOPPED": STATUS_YELLOW,
         }
         color = colors.get(status, "#888888")
-        self.setText(f" {status} ")
+        self.setText(f"  {status}  ")
         self.setStyleSheet(
             f"background-color: {color}; color: white; "
             f"border-radius: 4px; padding: 2px 8px; "
-            f"font-weight: bold; font-size: 11px;"
+            f"font-weight: bold; font-size: 11px; "
+            f"font-family: Menlo, monospace;"
         )
 
 
-APP_VERSION = "0.3.2-alpha"
+APP_VERSION = "0.4.0-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -200,6 +202,8 @@ class MainWindow(QMainWindow):
         self._last_waveforms: dict[int, WaveformData] = {}
         self._trigger_source: str = "CHAN1"  # Track trigger source for offset
         self._zoom_undo_stack: list[dict] = []
+        self._time_cursors: dict[int, float] = {1: 0.0, 2: 0.0}
+        self._volt_cursors: dict[int, float] = {1: 0.0, 2: 0.0}
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -264,12 +268,13 @@ class MainWindow(QMainWindow):
         scpi_action.triggered.connect(self._open_scpi_tester)
         tools_menu.addAction(scpi_action)
 
-        # Settings menu
+        tools_menu.addSeparator()
+
         settings_action = QAction("Settings...", self)
-        settings_action.setMenuRole(QAction.MenuRole.NoRole)  # Keep visible (macOS moves it otherwise)
+        settings_action.setMenuRole(QAction.MenuRole.NoRole)
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self._open_settings)
-        menubar.addAction(settings_action)
+        tools_menu.addAction(settings_action)
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -279,34 +284,44 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
+    _TB_BTN_HEIGHT = 28   # Uniform height for toolbar buttons & indicators
+    _TB_BTN_MIN_W = 80    # Minimum width for Run/Stop/Single buttons
+    _TB_FONT = "font-size: 11px; font-weight: bold; font-family: Menlo, monospace;"
+
+    @staticmethod
+    def _tb_btn_style(bg: str, hover: str) -> str:
+        """Generate toolbar button stylesheet."""
+        font = MainWindow._TB_FONT
+        return (
+            f"QPushButton {{ background-color: {bg}; color: white; "
+            f"{font} border-radius: 4px; padding: 0 12px; }}"
+            f"QPushButton:hover {{ background-color: {hover}; }}"
+            f"QPushButton:disabled {{ background-color: #333333; color: #666666; }}"
+        )
+
     def _build_toolbar(self):
         """Build the Run/Stop/Single toolbar."""
         toolbar = QWidget()
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(8, 4, 8, 4)
+        tb_layout.setSpacing(6)
 
         # Run button
         self._run_btn = QPushButton("▶ Run")
-        self._run_btn.setFixedHeight(32)
-        self._run_btn.setMinimumWidth(80)
+        self._run_btn.setFixedHeight(self._TB_BTN_HEIGHT)
+        self._run_btn.setMinimumWidth(self._TB_BTN_MIN_W)
         self._run_btn.setStyleSheet(
-            "QPushButton { background-color: #2a6e2a; color: white; "
-            "font-weight: bold; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #3a8e3a; }"
-            "QPushButton:disabled { background-color: #333333; color: #666666; }"
+            self._tb_btn_style("#2a6e2a", "#3a8e3a")
         )
         self._run_btn.clicked.connect(self._on_run)
         tb_layout.addWidget(self._run_btn)
 
         # Stop button
         self._stop_btn = QPushButton("■ Stop")
-        self._stop_btn.setFixedHeight(32)
-        self._stop_btn.setMinimumWidth(80)
+        self._stop_btn.setFixedHeight(self._TB_BTN_HEIGHT)
+        self._stop_btn.setMinimumWidth(self._TB_BTN_MIN_W)
         self._stop_btn.setStyleSheet(
-            "QPushButton { background-color: #6e2a2a; color: white; "
-            "font-weight: bold; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #8e3a3a; }"
-            "QPushButton:disabled { background-color: #333333; color: #666666; }"
+            self._tb_btn_style("#6e2a2a", "#8e3a3a")
         )
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop)
@@ -314,13 +329,10 @@ class MainWindow(QMainWindow):
 
         # Single button
         self._single_btn = QPushButton("⎍ Single")
-        self._single_btn.setFixedHeight(32)
-        self._single_btn.setMinimumWidth(80)
+        self._single_btn.setFixedHeight(self._TB_BTN_HEIGHT)
+        self._single_btn.setMinimumWidth(self._TB_BTN_MIN_W)
         self._single_btn.setStyleSheet(
-            "QPushButton { background-color: #2a4a6e; color: white; "
-            "font-weight: bold; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #3a5a8e; }"
-            "QPushButton:disabled { background-color: #333333; color: #666666; }"
+            self._tb_btn_style("#2a4a6e", "#3a5a8e")
         )
         self._single_btn.clicked.connect(self._on_single)
         tb_layout.addWidget(self._single_btn)
@@ -329,22 +341,23 @@ class MainWindow(QMainWindow):
 
         # FPS label
         self._fps_label = QLabel("")
+        self._fps_label.setFixedHeight(self._TB_BTN_HEIGHT)
         self._fps_label.setStyleSheet(
-            "color: #555555; font-size: 10px; font-family: Menlo, monospace;"
+            f"color: #555555; {self._TB_FONT} padding: 0 4px;"
         )
         tb_layout.addWidget(self._fps_label)
 
         # Trigger status indicator
         self._trigger_status_label = QLabel("")
-        self._trigger_status_label.setFixedHeight(24)
+        self._trigger_status_label.setFixedHeight(self._TB_BTN_HEIGHT)
         self._trigger_status_label.setStyleSheet(
-            "color: #888888; font-size: 11px; font-weight: bold; "
-            "font-family: Menlo, monospace; padding: 2px 6px;"
+            f"color: #888888; {self._TB_FONT} padding: 2px 6px;"
         )
         tb_layout.addWidget(self._trigger_status_label)
 
         # Status indicator
         self._status_indicator = StatusIndicator()
+        self._status_indicator.setFixedHeight(self._TB_BTN_HEIGHT)
         tb_layout.addWidget(self._status_indicator)
 
         # Add toolbar to layout (will be at the top of central widget)
@@ -375,6 +388,11 @@ class MainWindow(QMainWindow):
         self._waveform.setSizePolicy(QSizePolicy.Policy.Expanding,
                                       QSizePolicy.Policy.Expanding)
         left_layout.addWidget(self._waveform, stretch=1)
+
+        # Cursor readout (between waveform and measurement bar)
+        self._cursor_readout = CursorReadout()
+        self._cursor_readout.setVisible(False)  # Hidden until cursors enabled
+        left_layout.addWidget(self._cursor_readout)
 
         # Measurement bar
         self._measurement_bar = MeasurementBar(num_channels=NUM_CHANNELS)
@@ -513,6 +531,12 @@ class MainWindow(QMainWindow):
             self._on_trigger_pos_dragged
         )
         self._waveform.offset_dragged.connect(self._on_offset_dragged)
+        self._waveform.cursor_moved.connect(self._on_cursor_moved)
+
+        # --- Cursor controls ---
+        self._utility_panel.cursor_mode_changed.connect(
+            self._on_cursor_mode_changed
+        )
 
     # --- Toolbar actions ---
 
@@ -600,6 +624,45 @@ class MainWindow(QMainWindow):
         self.sig_set_channel_enabled.emit(ch, enabled)
         self._waveform.set_channel_enabled(ch, enabled)
         self._measurement_bar.set_channel_visible(ch, enabled)
+
+    # --- Cursor callbacks ---
+
+    def _on_cursor_mode_changed(self, mode: str):
+        """Handle cursor mode changed from utility panel combo."""
+        self._waveform.set_cursor_mode(mode)
+        self._cursor_readout.set_mode(mode)
+        self._cursor_readout.setVisible(mode != "off")
+
+        # Push initial cursor values to the readout
+        if mode in ("time", "both"):
+            t1 = self._waveform._time_cursors[0]
+            t2 = self._waveform._time_cursors[1]
+            self._time_cursors = {1: t1, 2: t2}
+            self._cursor_readout.update_time_cursors(t1, t2)
+        if mode in ("voltage", "both"):
+            v1 = self._waveform._volt_cursors[0]
+            v2 = self._waveform._volt_cursors[1]
+            self._volt_cursors = {1: v1, 2: v2}
+            self._cursor_readout.update_volt_cursors(v1, v2)
+
+    def _on_cursor_moved(self, cursor_type: str, cursor_id: int, value: float):
+        """Handle cursor dragged on waveform graph.
+
+        Args:
+            cursor_type: "time" or "voltage"
+            cursor_id: 1 or 2 (from signal, 1-indexed)
+            value: New position value (seconds or volts)
+        """
+        if cursor_type == "time":
+            self._time_cursors[cursor_id] = value
+            self._cursor_readout.update_time_cursors(
+                self._time_cursors[1], self._time_cursors[2]
+            )
+        elif cursor_type == "voltage":
+            self._volt_cursors[cursor_id] = value
+            self._cursor_readout.update_volt_cursors(
+                self._volt_cursors[1], self._volt_cursors[2]
+            )
 
     def _on_zoom_requested(self, t_min: float, v_min: float,
                            t_max: float, v_max: float):
@@ -820,8 +883,7 @@ class MainWindow(QMainWindow):
         self._trigger_status_label.setStyleSheet(
             f"background-color: {color}; color: #000000; "
             f"border-radius: 4px; padding: 2px 8px; "
-            f"font-weight: bold; font-size: 11px; "
-            f"font-family: Menlo, monospace;"
+            f"{self._TB_FONT}"
         )
 
     # --- Connection ---
@@ -880,13 +942,17 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self):
         """Open settings dialog."""
+        from gui.knob_widget import RotaryKnob
+
         dialog = SettingsDialog(
             num_channels=NUM_CHANNELS,
             current_colors=self._channel_colors,
+            knob_scroll_enabled=RotaryKnob._scroll_enabled,
             parent=self,
         )
 
         dialog.channel_color_changed.connect(self._on_color_changed)
+        dialog.knob_scroll_changed.connect(RotaryKnob.set_scroll_enabled)
 
         if dialog.exec():
             # Apply probe settings
