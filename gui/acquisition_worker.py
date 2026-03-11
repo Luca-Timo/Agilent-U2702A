@@ -396,8 +396,14 @@ class AcquisitionWorker(QObject):
 
             # Order channels: trigger source first (so we find the
             # crossing before building time axes for other channels).
+            # If trigger source is not enabled, still read it for
+            # trigger detection but don't emit its waveform.
             ordered = list(self._enabled_channels)
-            if trig_ch in ordered:
+            trig_ch_hidden = False
+            if trig_ch is not None and trig_ch not in ordered:
+                ordered.insert(0, trig_ch)
+                trig_ch_hidden = True  # Read for trigger only
+            elif trig_ch in ordered:
                 ordered.remove(trig_ch)
                 ordered.insert(0, trig_ch)
 
@@ -416,9 +422,14 @@ class AcquisitionWorker(QObject):
                         # On the trigger source channel, detect the
                         # crossing and remember it for other channels.
                         if ch == trig_ch and trigger_sample is None:
+                            # Adjust trigger level by channel offset —
+                            # voltage data has offset baked in, so the
+                            # crossing level must match.
+                            adjusted_level = (self._trigger_level
+                                              + waveform.offset)
                             trigger_sample = find_trigger_crossing(
                                 waveform.voltage,
-                                self._trigger_level,
+                                adjusted_level,
                                 self._trigger_slope,
                             )
                             if trigger_sample is not None:
@@ -430,7 +441,9 @@ class AcquisitionWorker(QObject):
                                     trigger_sample=trigger_sample,
                                 )
 
-                        self.waveform_ready.emit(waveform)
+                        # Only emit waveform for enabled (visible) channels
+                        if not (ch == trig_ch and trig_ch_hidden):
+                            self.waveform_ready.emit(waveform)
                 except SerialBridgeError as e:
                     self.error_occurred.emit(f"CH{ch} read failed: {e}")
 

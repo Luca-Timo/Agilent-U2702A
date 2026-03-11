@@ -90,6 +90,7 @@ class RotaryKnob(QWidget):
 
         # Continuous mode
         self._continuous = False
+        self._center_zero = False  # Bipolar arc (center = 0)
         self._min_val = 0.0
         self._max_val = 1.0
         self._step = 0.1
@@ -149,6 +150,8 @@ class RotaryKnob(QWidget):
         self._max_val = max_val
         self._step = step
         self._value = initial if initial is not None else min_val
+        # Auto-detect bipolar: arc sweeps from center when range spans zero
+        self._center_zero = (min_val < 0 and max_val > 0)
         self._update_display()
 
     def set_format_func(self, func):
@@ -255,14 +258,25 @@ class RotaryKnob(QWidget):
 
         # Arc track (active portion)
         frac = self._value_fraction()
-        active_span = int(self.ARC_SPAN * frac)
         pen = QPen(QColor("#4a9eff"), 2.5)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        if active_span != 0:
-            painter.drawArc(track_rect,
-                            self.ARC_START_ANGLE * 16,
-                            active_span * 16)
+
+        if self._center_zero:
+            # Bipolar: arc from center (12 o'clock = 0) toward current value
+            center_angle = self.ARC_START_ANGLE + self.ARC_SPAN * 0.5
+            active_span = int(self.ARC_SPAN * (frac - 0.5))
+            if active_span != 0:
+                painter.drawArc(track_rect,
+                                int(center_angle * 16),
+                                active_span * 16)
+        else:
+            # Unipolar: arc from start to current value
+            active_span = int(self.ARC_SPAN * frac)
+            if active_span != 0:
+                painter.drawArc(track_rect,
+                                self.ARC_START_ANGLE * 16,
+                                active_span * 16)
 
         # Indicator line
         angle_deg = self.ARC_START_ANGLE + self.ARC_SPAN * frac

@@ -48,6 +48,7 @@ class WaveformWidget(pg.PlotWidget):
         # Trigger state
         self._trigger_pos: float = 0.0      # Time position (seconds)
         self._trigger_level: float = 0.0    # Voltage level
+        self._trigger_source_offset: float = 0.0  # Source channel's Y offset
         self._trigger_pos_marker: pg.ScatterPlotItem | None = None
         self._trigger_level_line: pg.InfiniteLine | None = None
         self._trigger_level_badge: pg.TextItem | None = None
@@ -214,13 +215,19 @@ class WaveformWidget(pg.PlotWidget):
             )
 
     def _update_trigger_level_position(self):
-        """Reposition the trigger level line and right-edge badge."""
+        """Reposition the trigger level line and right-edge badge.
+
+        The trigger level is offset by the source channel's vertical offset
+        so the line aligns with the waveform on screen.
+        """
+        screen_y = self._trigger_level + self._trigger_source_offset
+
         if self._trigger_level_line is not None:
-            self._trigger_level_line.setPos(self._trigger_level)
+            self._trigger_level_line.setPos(screen_y)
 
         if self._trigger_level_badge is not None:
             right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
-            self._trigger_level_badge.setPos(right_x, self._trigger_level)
+            self._trigger_level_badge.setPos(right_x, screen_y)
 
     # --- Public API ---
 
@@ -279,16 +286,21 @@ class WaveformWidget(pg.PlotWidget):
         """Update the trigger level line and right-edge badge."""
         self._trigger_level = level
 
-        # Move horizontal dashed line
-        if self._trigger_level_line is not None:
-            self._trigger_level_line.setPos(level)
-
-        # Update badge text and position
+        # Update badge text and reposition (line + badge use source offset)
         if self._trigger_level_badge is not None:
             self._trigger_level_badge.setHtml(
                 self._trigger_badge_html(level)
             )
-            self._update_trigger_level_position()
+        self._update_trigger_level_position()
+
+    def set_trigger_source_offset(self, offset: float):
+        """Set the trigger source channel's vertical offset.
+
+        The trigger level line shifts by this offset so it aligns with
+        the source channel's waveform on screen.
+        """
+        self._trigger_source_offset = offset
+        self._update_trigger_level_position()
 
     def update_waveform(self, waveform: WaveformData):
         """Update a channel's waveform display.

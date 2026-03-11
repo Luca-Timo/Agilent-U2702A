@@ -198,6 +198,7 @@ class MainWindow(QMainWindow):
         self._scpi_tester = None
         self._channel_colors: dict[int, str] = {}
         self._last_waveforms: dict[int, WaveformData] = {}
+        self._trigger_source: str = "CHAN1"  # Track trigger source for offset
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -471,7 +472,7 @@ class MainWindow(QMainWindow):
             self._on_trigger_level_changed
         )
         self._trigger_panel.source_changed.connect(
-            lambda v: self.sig_set_trigger_source.emit(v)
+            self._on_trigger_source_changed
         )
         self._trigger_panel.slope_changed.connect(
             lambda v: self.sig_set_trigger_slope.emit(v)
@@ -533,6 +534,9 @@ class MainWindow(QMainWindow):
     def _on_offset_changed(self, ch: int, value: float):
         self.sig_set_offset.emit(ch, value)
         self._waveform.set_channel_offset(ch, value)
+        # If this is the trigger source channel, update trigger line position
+        if self._trigger_source == f"CHAN{ch}":
+            self._waveform.set_trigger_source_offset(value)
 
     def _on_position_changed(self, value: float):
         self.sig_set_position.emit(value)
@@ -541,6 +545,18 @@ class MainWindow(QMainWindow):
     def _on_trigger_level_changed(self, value: float):
         self.sig_set_trigger_level.emit(value)
         self._waveform.set_trigger_level(value)
+
+    def _on_trigger_source_changed(self, source: str):
+        self.sig_set_trigger_source.emit(source)
+        self._trigger_source = source
+        # Update trigger line offset to match new source channel
+        if source.startswith("CHAN"):
+            ch = int(source[4:])
+            ch_state = self._channel_panel.get_state(ch)
+            self._waveform.set_trigger_source_offset(ch_state.offset)
+        else:
+            # EXT trigger — no channel offset
+            self._waveform.set_trigger_source_offset(0.0)
 
     def _on_tdiv_changed(self, value: float):
         self.sig_set_tdiv.emit(value)
@@ -597,15 +613,23 @@ class MainWindow(QMainWindow):
             self._timebase_panel.set_tdiv(tb["t_per_div"])
         if "position" in tb:
             self._timebase_panel.set_position(tb["position"])
-            self._waveform.set_trigger_position(tb["position"])
+            self._waveform.set_h_position(tb["position"])
 
         # Apply trigger
         trig = state.get("trigger", {})
         if "source" in trig:
             self._trigger_panel.set_source(trig["source"])
+            self._trigger_source = trig["source"]
         if "level" in trig:
             self._trigger_panel.set_level(trig["level"])
             self._waveform.set_trigger_level(trig["level"])
+
+        # Sync trigger level line with source channel's offset
+        if self._trigger_source.startswith("CHAN"):
+            src_ch = int(self._trigger_source[4:])
+            channels = state.get("channels", {})
+            src_offset = channels.get(src_ch, {}).get("offset", 0.0)
+            self._waveform.set_trigger_source_offset(src_offset)
         if "slope" in trig:
             self._trigger_panel.set_slope(trig["slope"])
         if "sweep" in trig:
