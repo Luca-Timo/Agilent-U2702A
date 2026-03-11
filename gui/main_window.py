@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
 
     def _on_position_changed(self, value: float):
         self.sig_set_position.emit(value)
-        self._waveform.set_trigger_position(value)
+        self._waveform.set_h_position(value)
 
     def _on_trigger_level_changed(self, value: float):
         self.sig_set_trigger_level.emit(value)

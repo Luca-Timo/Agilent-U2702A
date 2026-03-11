@@ -42,6 +42,9 @@ class WaveformWidget(pg.PlotWidget):
         self._gnd_markers: dict[int, pg.TextItem] = {}
         self._channel_offsets: dict[int, float] = {}
 
+        # Horizontal position (view offset from position knob)
+        self._h_position: float = 0.0
+
         # Trigger state
         self._trigger_pos: float = 0.0      # Time position (seconds)
         self._trigger_level: float = 0.0    # Voltage level
@@ -165,20 +168,24 @@ class WaveformWidget(pg.PlotWidget):
         )
 
     def _update_axis_range(self):
-        """Update axis range based on current V/div and T/div."""
+        """Update axis range based on current V/div, T/div, and position."""
         h_half = (self.NUM_H_DIVS / 2) * self._t_per_div
         v_half = (self.NUM_V_DIVS / 2) * self._v_per_div
 
-        self.setXRange(-h_half, h_half, padding=0)
+        # Offset X range by horizontal position
+        self.setXRange(self._h_position - h_half,
+                       self._h_position + h_half, padding=0)
         self.setYRange(-v_half, v_half, padding=0)
 
-        # Reposition graticule lines
+        # Reposition graticule lines (centered on view, not on origin)
         for item in self._graticule_lines:
             tag = item[0]
             line = item[1]
-            if tag == 'vgrid':
+            if tag == 'vcenter':
+                line.setPos(self._h_position)
+            elif tag == 'vgrid':
                 div_idx = item[2]
-                line.setPos(div_idx * self._t_per_div)
+                line.setPos(self._h_position + div_idx * self._t_per_div)
             elif tag == 'hgrid':
                 div_idx = item[2]
                 line.setPos(div_idx * self._v_per_div)
@@ -192,7 +199,7 @@ class WaveformWidget(pg.PlotWidget):
 
     def _update_gnd_positions(self):
         """Reposition all GND markers to the left edge of the plot."""
-        left_x = -(self.NUM_H_DIVS / 2) * self._t_per_div
+        left_x = self._h_position - (self.NUM_H_DIVS / 2) * self._t_per_div
 
         for ch, marker in self._gnd_markers.items():
             offset = self._channel_offsets.get(ch, 0.0)
@@ -212,7 +219,7 @@ class WaveformWidget(pg.PlotWidget):
             self._trigger_level_line.setPos(self._trigger_level)
 
         if self._trigger_level_badge is not None:
-            right_x = (self.NUM_H_DIVS / 2) * self._t_per_div
+            right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
             self._trigger_level_badge.setPos(right_x, self._trigger_level)
 
     # --- Public API ---
@@ -221,6 +228,15 @@ class WaveformWidget(pg.PlotWidget):
         """Update axis scaling."""
         self._v_per_div = v_per_div
         self._t_per_div = t_per_div
+        self._update_axis_range()
+
+    def set_h_position(self, position: float):
+        """Shift the horizontal view position.
+
+        Moves the view window so the waveform scrolls left/right.
+        The trigger marker (▼) stays at t=0 in data coordinates.
+        """
+        self._h_position = position
         self._update_axis_range()
 
     def set_channel_color(self, channel: int, color: str):
@@ -313,7 +329,7 @@ class WaveformWidget(pg.PlotWidget):
             return  # Already exists
 
         color = self._colors.get(channel, channel_color(channel))
-        left_x = -(self.NUM_H_DIVS / 2) * self._t_per_div
+        left_x = self._h_position - (self.NUM_H_DIVS / 2) * self._t_per_div
         offset = self._channel_offsets.get(channel, 0.0)
 
         # HTML badge: bordered box with channel number + arrow
