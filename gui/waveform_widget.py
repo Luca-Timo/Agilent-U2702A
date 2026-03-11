@@ -61,10 +61,12 @@ class WaveformWidget(pg.PlotWidget):
         # Trigger state
         self._trigger_pos: float = 0.0      # Time position (seconds)
         self._trigger_level: float = 0.0    # Voltage level
+        self._trigger_slope: str = "POS"    # Trigger slope (POS/NEG/EITH/ALT)
         self._trigger_source_offset: float = 0.0  # Source channel's Y offset
         self._trigger_pos_marker: pg.ScatterPlotItem | None = None
         self._trigger_level_line: pg.InfiniteLine | None = None
         self._trigger_level_badge: pg.TextItem | None = None
+        self._trigger_slope_badge: pg.TextItem | None = None
 
         # Drag state: None, 'trigger_level', 'trigger_pos', or ('offset', ch)
         self._dragging: str | tuple | None = None
@@ -184,6 +186,13 @@ class WaveformWidget(pg.PlotWidget):
         )
         self.addItem(self._trigger_level_badge)
 
+        # --- Trigger slope icon (right edge, above trigger badge) ---
+        self._trigger_slope_badge = pg.TextItem(
+            html=self._slope_icon_html(self._trigger_slope),
+            anchor=(1.0, 1.0),  # Right-aligned, bottom-anchored (sits above badge)
+        )
+        self.addItem(self._trigger_slope_badge)
+
     @staticmethod
     def _trigger_badge_html(level: float) -> str:
         """Generate HTML for the trigger level badge."""
@@ -200,6 +209,35 @@ class WaveformWidget(pg.PlotWidget):
             f'font-weight: bold;'
             f'font-family: Menlo, monospace;'
             f'">T ◀ {text}</div>'
+        )
+
+    @staticmethod
+    def _slope_icon_html(slope: str) -> str:
+        """Generate HTML for the trigger slope icon badge.
+
+        Shows a step-edge icon matching the trigger slope direction:
+        POS: rising edge ⌊‾   NEG: falling edge ‾⌋
+        EITH: both ↕          ALT: alternating ⇅
+        """
+        icons = {
+            "POS": "╱",     # Rising edge
+            "NEG": "╲",     # Falling edge
+            "EITH": "↕",    # Either edge
+            "ALT": "⇅",     # Alternating
+        }
+        icon = icons.get(slope, "╱")
+        return (
+            f'<div style="'
+            f'background-color: {TRIGGER_COLOR};'
+            f'color: #ffffff;'
+            f'border: 1px solid {TRIGGER_COLOR};'
+            f'border-radius: 2px;'
+            f'padding: 1px 4px;'
+            f'font-size: 14px;'
+            f'font-weight: bold;'
+            f'font-family: Menlo, monospace;'
+            f'text-align: center;'
+            f'">{icon}</div>'
         )
 
     def _update_axis_range(self):
@@ -262,6 +300,12 @@ class WaveformWidget(pg.PlotWidget):
         if self._trigger_level_badge is not None:
             right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
             self._trigger_level_badge.setPos(right_x, screen_y)
+
+        if self._trigger_slope_badge is not None:
+            right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
+            # Position the slope icon slightly above the trigger level line
+            offset_y = 0.35 * self._v_per_div
+            self._trigger_slope_badge.setPos(right_x, screen_y + offset_y)
 
     # --- Public API ---
 
@@ -326,6 +370,16 @@ class WaveformWidget(pg.PlotWidget):
                 self._trigger_badge_html(level)
             )
         self._update_trigger_level_position()
+
+    def set_trigger_slope(self, slope: str):
+        """Update the trigger slope indicator icon on the graph.
+
+        Args:
+            slope: One of "POS", "NEG", "EITH", "ALT"
+        """
+        self._trigger_slope = slope
+        if self._trigger_slope_badge is not None:
+            self._trigger_slope_badge.setHtml(self._slope_icon_html(slope))
 
     def set_trigger_source_offset(self, offset: float):
         """Set the trigger source channel's vertical offset.

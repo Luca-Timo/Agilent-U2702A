@@ -57,12 +57,15 @@ class TriggerPanel(QGroupBox):
         src_layout.addWidget(self._source_combo)
         layout.addLayout(src_layout)
 
-        # Slope dropdown
+        # Slope dropdown — display names with arrow icons, data values are SCPI
         slope_layout = QHBoxLayout()
         slope_layout.addWidget(QLabel("Slope:"))
         self._slope_combo = QComboBox()
-        self._slope_combo.addItems(["POS", "NEG", "EITH", "ALT"])
-        self._slope_combo.currentTextChanged.connect(self._on_slope_changed)
+        self._slope_combo.addItem("↗ POS", "POS")
+        self._slope_combo.addItem("↘ NEG", "NEG")
+        self._slope_combo.addItem("↕ EITH", "EITH")
+        self._slope_combo.addItem("⇅ ALT", "ALT")
+        self._slope_combo.currentIndexChanged.connect(self._on_slope_index_changed)
         slope_layout.addWidget(self._slope_combo)
         layout.addLayout(slope_layout)
 
@@ -92,8 +95,10 @@ class TriggerPanel(QGroupBox):
     def _on_source_changed(self, text: str):
         self.source_changed.emit(text)
 
-    def _on_slope_changed(self, text: str):
-        self.slope_changed.emit(text)
+    def _on_slope_index_changed(self, index: int):
+        slope = self._slope_combo.itemData(index)
+        if slope:
+            self.slope_changed.emit(slope)
 
     def _on_sweep_changed(self, text: str):
         self.sweep_changed.emit(text)
@@ -112,7 +117,7 @@ class TriggerPanel(QGroupBox):
             self._source_combo.setCurrentIndex(idx)
 
     def set_slope(self, slope: str):
-        idx = self._slope_combo.findText(slope)
+        idx = self._slope_combo.findData(slope)
         if idx >= 0:
             self._slope_combo.setCurrentIndex(idx)
 

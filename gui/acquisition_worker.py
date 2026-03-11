@@ -51,6 +51,7 @@ class AcquisitionWorker(QObject):
     status_changed = Signal(str)
     error_occurred = Signal(str)
     fps_update = Signal(float)
+    trigger_status = Signal(str)    # ARMED, TRIG'D, AUTO, READY
 
     def __init__(self):
         super().__init__()
@@ -340,6 +341,7 @@ class AcquisitionWorker(QObject):
         """Stop acquisition."""
         self._running = False
         self._mode = "stopped"
+        self.trigger_status.emit("READY")
 
     def _acquisition_loop(self):
         """Main continuous acquisition loop."""
@@ -384,6 +386,7 @@ class AcquisitionWorker(QObject):
                 )
 
             # Trigger ONE acquisition for all channels
+            self.trigger_status.emit("ARMED")
             self._bridge.write(protocol.SINGLE, timeout=1.0)
 
             # Determine trigger source channel number (e.g. "CHAN1" → 1)
@@ -410,7 +413,7 @@ class AcquisitionWorker(QObject):
             trigger_sample = None  # shared across all channels
 
             for i, ch in enumerate(ordered):
-                if not self._running and self._mode == "continuous":
+                if not self._running:
                     break
 
                 try:
@@ -433,6 +436,7 @@ class AcquisitionWorker(QObject):
                                 self._trigger_slope,
                             )
                             if trigger_sample is not None:
+                                self.trigger_status.emit("TRIG'D")
                                 # Rebuild this channel's time axis with
                                 # the detected trigger position.
                                 waveform.time_axis = make_time_axis(
@@ -440,6 +444,8 @@ class AcquisitionWorker(QObject):
                                     self._t_per_div,
                                     trigger_sample=trigger_sample,
                                 )
+                            else:
+                                self.trigger_status.emit("AUTO")
 
                         # Only emit waveform for enabled (visible) channels
                         if not (ch == trig_ch and trig_ch_hidden):
@@ -468,7 +474,7 @@ class AcquisitionWorker(QObject):
         # Poll WAV:DATA? — returns "00" until ready, then full data
         max_polls = 50 if poll else 10
         for _ in range(max_polls):
-            if not self._running and self._mode == "continuous":
+            if not self._running:
                 return None
 
             try:

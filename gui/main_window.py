@@ -65,7 +65,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.3.0-alpha"
+APP_VERSION = "0.3.1-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -334,6 +334,15 @@ class MainWindow(QMainWindow):
         )
         tb_layout.addWidget(self._fps_label)
 
+        # Trigger status indicator
+        self._trigger_status_label = QLabel("")
+        self._trigger_status_label.setFixedHeight(24)
+        self._trigger_status_label.setStyleSheet(
+            "color: #888888; font-size: 11px; font-weight: bold; "
+            "font-family: Menlo, monospace; padding: 2px 6px;"
+        )
+        tb_layout.addWidget(self._trigger_status_label)
+
         # Status indicator
         self._status_indicator = StatusIndicator()
         tb_layout.addWidget(self._status_indicator)
@@ -452,6 +461,7 @@ class MainWindow(QMainWindow):
         self._worker.status_changed.connect(self._on_bridge_status)
         self._worker.error_occurred.connect(self._on_error)
         self._worker.fps_update.connect(self._on_fps_update)
+        self._worker.trigger_status.connect(self._on_trigger_status)
 
         # --- Channel panel → MainWindow/Worker ---
         self._channel_panel.vdiv_changed.connect(self._on_vdiv_changed)
@@ -480,9 +490,7 @@ class MainWindow(QMainWindow):
         self._trigger_panel.source_changed.connect(
             self._on_trigger_source_changed
         )
-        self._trigger_panel.slope_changed.connect(
-            lambda v: self.sig_set_trigger_slope.emit(v)
-        )
+        self._trigger_panel.slope_changed.connect(self._on_trigger_slope_changed)
         self._trigger_panel.sweep_changed.connect(
             lambda v: self.sig_set_trigger_sweep.emit(v)
         )
@@ -527,6 +535,8 @@ class MainWindow(QMainWindow):
         self._single_btn.setEnabled(True)
         self._status_indicator.set_status("STOPPED")
         self._fps_label.setText("")
+        self._trigger_status_label.setText("")
+        self._trigger_status_label.setStyleSheet("")
 
     def _on_single(self):
         if not self._bridge:
@@ -561,6 +571,10 @@ class MainWindow(QMainWindow):
     def _on_trigger_level_changed(self, value: float):
         self.sig_set_trigger_level.emit(value)
         self._waveform.set_trigger_level(value)
+
+    def _on_trigger_slope_changed(self, slope: str):
+        self.sig_set_trigger_slope.emit(slope)
+        self._waveform.set_trigger_slope(slope)
 
     def _on_trigger_source_changed(self, source: str):
         self.sig_set_trigger_source.emit(source)
@@ -763,6 +777,7 @@ class MainWindow(QMainWindow):
             self._waveform.set_trigger_source_offset(src_offset)
         if "slope" in trig:
             self._trigger_panel.set_slope(trig["slope"])
+            self._waveform.set_trigger_slope(trig["slope"])
         if "sweep" in trig:
             self._trigger_panel.set_sweep(trig["sweep"])
         if "coupling" in trig:
@@ -790,6 +805,24 @@ class MainWindow(QMainWindow):
     @Slot(float)
     def _on_fps_update(self, fps: float):
         self._fps_label.setText(f"{fps:.1f} fps")
+
+    @Slot(str)
+    def _on_trigger_status(self, status: str):
+        """Update the trigger status indicator in the toolbar."""
+        colors = {
+            "ARMED": "#ffcc00",     # yellow — waiting for trigger
+            "TRIG'D": "#50c878",    # green — trigger found
+            "AUTO": "#ff8844",      # orange — auto-triggered (no edge found)
+            "READY": "#888888",     # gray — idle
+        }
+        color = colors.get(status, "#888888")
+        self._trigger_status_label.setText(f"  {status}  ")
+        self._trigger_status_label.setStyleSheet(
+            f"background-color: {color}; color: #000000; "
+            f"border-radius: 4px; padding: 2px 8px; "
+            f"font-weight: bold; font-size: 11px; "
+            f"font-family: Menlo, monospace;"
+        )
 
     # --- Connection ---
 

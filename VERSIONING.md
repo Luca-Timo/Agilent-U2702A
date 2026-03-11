@@ -2,8 +2,8 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.3.0-alpha
-> Last updated: 2026-03-10
+> Current version: 0.3.1-alpha
+> Last updated: 2026-03-11
 
 ---
 
@@ -34,7 +34,7 @@
 
 ---
 
-## 0.2.x-alpha -- Controls, Scaling & Trigger ← CURRENT
+## 0.2.x-alpha -- Controls, Scaling & Trigger ✅
 
 **Goal**: Full oscilloscope GUI with controls, scaling, trigger, and measurements.
 
@@ -66,16 +66,19 @@
 
 ---
 
-## 0.3.x-alpha -- Trigger System
+## 0.3.x-alpha -- Trigger System ← CURRENT
 
 **Goal**: Functional trigger system.
 
-- [ ] Edge trigger (rising/falling)
-- [ ] Trigger source selection (CH1/CH2)
-- [ ] Trigger level adjustment
-- [ ] Trigger mode: Auto / Normal / Single
-- [ ] Trigger status indicator
-- [ ] Pulse width trigger
+- [x] Edge trigger (rising/falling/either/alternating)
+- [x] Trigger source selection (CH1/CH2/EXT)
+- [x] Trigger level adjustment (knob + drag on graph)
+- [x] Trigger mode: Auto / Normal / Single
+- [x] Trigger status indicator (ARMED/TRIG'D/AUTO/READY)
+- [x] Trigger slope indicator on waveform graph
+- [x] Trigger coupling (DC/AC/LFR/HFR)
+- [x] Software trigger alignment (crossing detection)
+- [ ] Pulse width trigger (protocol defined, GUI not yet wired)
 
 **Milestone**: Stable triggered acquisitions.
 
