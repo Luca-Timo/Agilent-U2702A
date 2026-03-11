@@ -62,6 +62,12 @@ class WaveformWidget(pg.PlotWidget):
         self._gnd_markers: dict[int, pg.TextItem] = {}
         self._channel_offsets: dict[int, float] = {}
         self._enabled_channels: set[int] = set()
+        self._probe_factors: dict[int, float] = {}
+
+        # Per-channel effective V/div (raw × probe) for independent scaling.
+        # Each channel's waveform is scaled by display_vdiv / ch_vdiv
+        # so channels with different V/div settings appear at correct sizes.
+        self._ch_effective_vdivs: dict[int, float] = {}
 
         # Horizontal position (view offset from position knob)
         self._h_position: float = 0.0
@@ -70,6 +76,7 @@ class WaveformWidget(pg.PlotWidget):
         self._trigger_pos: float = 0.0      # Time position (seconds)
         self._trigger_level: float = 0.0    # Voltage level
         self._trigger_slope: str = "POS"    # Trigger slope (POS/NEG/EITH/ALT)
+        self._trigger_source_ch: int = 1    # Which channel is the trigger source
         self._trigger_source_offset: float = 0.0  # Source channel's Y offset
         self._trigger_pos_marker: pg.ScatterPlotItem | None = None
         self._trigger_level_line: pg.InfiniteLine | None = None
@@ -274,6 +281,20 @@ class WaveformWidget(pg.PlotWidget):
             f'">{icon}</div>'
         )
 
+    def _ch_scale(self, ch: int) -> float:
+        """Scale factor to convert channel voltage to display space.
+
+        Each channel has its own effective V/div. The display axis uses
+        the active channel's V/div (``self._v_per_div``). A channel with
+        a larger V/div appears compressed, a smaller one appears stretched.
+
+        Returns 1.0 when the channel's V/div matches the display.
+        """
+        ch_vdiv = self._ch_effective_vdivs.get(ch, self._v_per_div)
+        if ch_vdiv <= 0:
+            return 1.0
+        return self._v_per_div / ch_vdiv
+
     def _update_axis_range(self):
         """Update axis range based on current V/div, T/div, and position."""
         h_half = (self.NUM_H_DIVS / 2) * self._t_per_div
@@ -313,7 +334,9 @@ class WaveformWidget(pg.PlotWidget):
 
         for ch, marker in self._gnd_markers.items():
             offset = self._channel_offsets.get(ch, 0.0)
-            marker.setPos(left_x, offset)
+            # Scale offset by per-channel factor so GND marker aligns
+            # with the channel's waveform in display space.
+            marker.setPos(left_x, offset * self._ch_scale(ch))
 
     def _update_trigger_position(self):
         """Reposition the trigger position marker to the top edge."""
@@ -327,9 +350,12 @@ class WaveformWidget(pg.PlotWidget):
         """Reposition the trigger level line and right-edge badge.
 
         The trigger level is offset by the source channel's vertical offset
-        so the line aligns with the waveform on screen.
+        so the line aligns with the waveform on screen.  Both the level
+        and offset are scaled by the trigger source channel's display
+        scale factor for per-channel V/div independence.
         """
-        screen_y = self._trigger_level + self._trigger_source_offset
+        scale = self._ch_scale(self._trigger_source_ch)
+        screen_y = (self._trigger_level + self._trigger_source_offset) * scale
 
         if self._trigger_level_line is not None:
             self._trigger_level_line.setPos(screen_y)
@@ -439,12 +465,40 @@ class WaveformWidget(pg.PlotWidget):
         self._h_position = position
         self._update_axis_range()
 
+    def set_channel_vdiv(self, channel: int, effective_vdiv: float):
+        """Set a channel's effective V/div for independent per-channel scaling.
+
+        Args:
+            channel: Channel number (1-based).
+            effective_vdiv: Effective V/div (raw scope V/div × probe factor).
+        """
+        self._ch_effective_vdivs[channel] = effective_vdiv
+        # Reposition GND markers and trigger level with new scale factors
+        self._update_gnd_positions()
+        self._update_trigger_level_position()
+
+    def set_trigger_source_channel(self, channel: int):
+        """Set which channel is the trigger source (for per-channel scaling).
+
+        The trigger level line position is scaled by this channel's
+        V/div factor so it aligns with the source waveform.
+        """
+        self._trigger_source_ch = channel
+        self._update_trigger_level_position()
+
     def set_channel_color(self, channel: int, color: str):
         """Set waveform color for a channel."""
         self._colors[channel] = color
         if channel in self._traces:
             self._traces[channel].setPen(pg.mkPen(color=color, width=1.5))
         # Recreate GND marker with new color
+        if channel in self._gnd_markers:
+            self._remove_gnd_marker(channel)
+            self._create_gnd_marker(channel)
+
+    def set_channel_probe(self, channel: int, factor: float):
+        """Update probe factor — refreshes GND marker badge."""
+        self._probe_factors[channel] = factor
         if channel in self._gnd_markers:
             self._remove_gnd_marker(channel)
             self._create_gnd_marker(channel)
@@ -626,7 +680,15 @@ class WaveformWidget(pg.PlotWidget):
             self._traces[ch] = trace
             self._create_gnd_marker(ch)
 
-        self._traces[ch].setData(waveform.time_axis, waveform.voltage)
+        # Scale voltage data by per-channel factor so each channel's
+        # waveform appears at the correct size relative to its own V/div.
+        scale = self._ch_scale(ch)
+        if scale != 1.0:
+            display_voltage = waveform.voltage * scale
+        else:
+            display_voltage = waveform.voltage
+
+        self._traces[ch].setData(waveform.time_axis, display_voltage)
 
         # Show trigger crossing marker on the trigger source channel.
         # Only the trigger source waveform has trigger_sample set.
@@ -647,11 +709,12 @@ class WaveformWidget(pg.PlotWidget):
                 frac = (screen_level - v0) / dv
                 frac = max(0.0, min(1.0, frac))  # clamp
                 cross_t = t0 + frac * (t1 - t0)
-                cross_v = screen_level
+                # Position dot in display space (scaled)
+                cross_v = screen_level * scale
             else:
-                # Flat segment — place at midpoint
+                # Flat segment — place at midpoint (in display space)
                 cross_t = (t0 + t1) / 2
-                cross_v = (v0 + v1) / 2
+                cross_v = ((v0 + v1) / 2) * scale
 
             self._trigger_crossing_ch = ch
             if self._trigger_crossing_dot is not None:
@@ -717,7 +780,8 @@ class WaveformWidget(pg.PlotWidget):
             th = self._HIT_THRESHOLD_PX
 
             # 1. Trigger level line (Y proximity anywhere on X)
-            trig_screen_y = self._trigger_level + self._trigger_source_offset
+            trig_scale = self._ch_scale(self._trigger_source_ch)
+            trig_screen_y = (self._trigger_level + self._trigger_source_offset) * trig_scale
             trig_level_py = self._data_to_widget_y(trig_screen_y)
             if abs(px_y - trig_level_py) < th:
                 self._dragging = 'trigger_level'
@@ -741,7 +805,8 @@ class WaveformWidget(pg.PlotWidget):
             left_px = self._data_to_widget_x(left_x)
             for ch in self._gnd_markers:
                 offset = self._channel_offsets.get(ch, 0.0)
-                marker_py = self._data_to_widget_y(offset)
+                # GND markers are displayed at scaled offset positions
+                marker_py = self._data_to_widget_y(offset * self._ch_scale(ch))
                 if abs(px_x - left_px) < th * 4 and abs(px_y - marker_py) < th * 2:
                     self._dragging = ('offset', ch)
                     self.setCursor(Qt.CursorShape.SizeVerCursor)
@@ -781,7 +846,13 @@ class WaveformWidget(pg.PlotWidget):
         # --- Marker drag handling ---
         if self._dragging == 'trigger_level':
             data_pt = self._widget_to_data(pos)
-            new_level = data_pt.y() - self._trigger_source_offset
+            # Reverse-scale from display space to the trigger source
+            # channel's real voltage, then subtract source offset.
+            trig_scale = self._ch_scale(self._trigger_source_ch)
+            if trig_scale > 0:
+                new_level = data_pt.y() / trig_scale - self._trigger_source_offset
+            else:
+                new_level = data_pt.y() - self._trigger_source_offset
             self._trigger_level = new_level
             self._update_trigger_level_position()
             if self._trigger_level_badge is not None:
@@ -809,7 +880,10 @@ class WaveformWidget(pg.PlotWidget):
         if isinstance(self._dragging, tuple) and self._dragging[0] == 'offset':
             ch = self._dragging[1]
             data_pt = self._widget_to_data(pos)
-            new_offset = data_pt.y()
+            # Reverse-scale from display space to the channel's real
+            # voltage space so the SCPI offset stays in real volts.
+            scale = self._ch_scale(ch)
+            new_offset = data_pt.y() / scale if scale > 0 else data_pt.y()
             self._channel_offsets[ch] = new_offset
             self._update_gnd_positions()
             self.offset_dragged.emit(ch, new_offset)
@@ -888,7 +962,7 @@ class WaveformWidget(pg.PlotWidget):
     def _create_gnd_marker(self, channel: int):
         """Create a GND badge on the left edge for a channel.
 
-        Renders as a bordered, colored label: CH ▶
+        Renders as a bordered, colored label: CH ▶  (or CH ▶ 10x with probe)
         Positioned at the left plot edge, at the channel's 0V offset.
         """
         if channel in self._gnd_markers:
@@ -897,6 +971,14 @@ class WaveformWidget(pg.PlotWidget):
         color = self._colors.get(channel, channel_color(channel))
         left_x = self._h_position - (self.NUM_H_DIVS / 2) * self._t_per_div
         offset = self._channel_offsets.get(channel, 0.0)
+
+        # Include probe factor in label when != 1x
+        probe = self._probe_factors.get(channel, 1.0)
+        if probe != 1.0:
+            label = (f'{channel} ▶ '
+                     f'<span style="font-size:9px;">{probe:g}x</span>')
+        else:
+            label = f"{channel} ▶"
 
         # HTML badge: bordered box with channel number + arrow
         html = (
@@ -909,11 +991,11 @@ class WaveformWidget(pg.PlotWidget):
             f'font-size: 11px;'
             f'font-weight: bold;'
             f'font-family: Menlo, monospace;'
-            f'">{channel} ▶</div>'
+            f'">{label}</div>'
         )
 
         marker = pg.TextItem(html=html, anchor=(0.0, 0.5))
-        marker.setPos(left_x, offset)
+        marker.setPos(left_x, offset * self._ch_scale(channel))
         self.addItem(marker)
         self._gnd_markers[channel] = marker
 

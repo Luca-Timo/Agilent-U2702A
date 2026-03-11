@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.4.1-alpha
+> Current version: 0.5.0-alpha
 > Last updated: 2026-03-11
 
 ---
@@ -86,7 +86,7 @@
 
 ---
 
-## 0.4.x-alpha -- Measurements & Math ← CURRENT
+## 0.4.x-alpha -- Measurements & Math ✅
 
 **Goal**: Automatic measurements and signal analysis.
 
@@ -105,16 +105,18 @@
 
 ---
 
-## 0.5.x-alpha -- Probe & Calibration
+## 0.5.x-alpha -- Probe & Calibration ← CURRENT
 
 **Goal**: Probe configuration and calibration.
 
-- [ ] Probe settings page (per-probe configuration)
-- [ ] Probe type selection: 1:1, 1:10
-- [ ] Probe factor applied to all measurements and display
-- [ ] Probe compensation check
-- [ ] Self-calibration trigger (if device supports it)
-- [ ] Custom probe attenuation factor (user-defined)
+- [x] Probe settings page (per-probe configuration)
+- [x] Probe type selection: 1:1, 1:10, 1:100, 1:1000
+- [x] Probe factor applied to all measurements and display
+- [x] Probe compensation check (guidance dialog)
+- [x] Self-calibration trigger (N/A — U2702A has no CAL SCPI commands)
+- [x] Custom probe attenuation factor (user-defined via dialog)
+- [x] Effective V/div label (shown when probe ≠ 1x)
+- [x] Probe badge on waveform GND markers
 
 **Milestone**: Accurate measurements with any probe type.
 

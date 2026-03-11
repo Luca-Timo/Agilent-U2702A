@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QComboBox, QPushButton, QGroupBox, QGridLayout,
-    QCheckBox, QSpinBox, QColorDialog, QFrame,
+    QCheckBox, QSpinBox, QColorDialog, QFrame, QInputDialog,
 )
 from PySide6.QtGui import QColor
 
@@ -67,6 +67,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, num_channels: int = NUM_CHANNELS,
                  current_colors: dict = None,
+                 current_probes: dict = None,
                  knob_scroll_enabled: bool = True,
                  parent=None):
         super().__init__(parent)
@@ -76,8 +77,10 @@ class SettingsDialog(QDialog):
 
         self._num_channels = num_channels
         self._colors = current_colors or {}
+        self._probes = current_probes or {}
         self._color_buttons: dict[int, ColorButton] = {}
         self._knob_scroll_enabled = knob_scroll_enabled
+        self._prev_probe_idx: dict[int, int] = {}
 
         self._setup_ui()
 
@@ -180,7 +183,24 @@ class SettingsDialog(QDialog):
             probe_grid.addWidget(label, ch - 1, 0)
 
             combo = QComboBox()
-            combo.addItems(["1x", "10x"])
+            combo.addItems(["1x", "10x", "100x", "1000x", "Custom..."])
+            combo.currentTextChanged.connect(
+                lambda text, c=ch: self._on_probe_combo_changed(c, text)
+            )
+
+            # Pre-select current probe factor
+            factor = self._probes.get(ch, 1.0)
+            text = f"{factor:g}x"
+            idx = combo.findText(text)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            else:
+                # Custom value — replace last item text
+                last = combo.count() - 1
+                combo.setItemText(last, text)
+                combo.setCurrentIndex(last)
+            self._prev_probe_idx[ch] = combo.currentIndex()
+
             self._probe_combos[ch] = combo
             probe_grid.addWidget(combo, ch - 1, 1)
 
@@ -191,6 +211,13 @@ class SettingsDialog(QDialog):
 
         probe_group.setLayout(probe_grid)
         probe_layout.addWidget(probe_group)
+
+        # Probe compensation button
+        comp_btn = QPushButton("Probe Compensation Check...")
+        comp_btn.setFixedHeight(32)
+        comp_btn.clicked.connect(self._show_probe_compensation)
+        probe_layout.addWidget(comp_btn)
+
         probe_layout.addStretch()
         tabs.addTab(probe_tab, "Probes")
 
@@ -219,6 +246,37 @@ class SettingsDialog(QDialog):
     def _on_scroll_toggled(self, checked: bool):
         self._knob_scroll_enabled = checked
         self.knob_scroll_changed.emit(checked)
+
+    def _on_probe_combo_changed(self, ch: int, text: str):
+        if text == "Custom...":
+            combo = self._probe_combos[ch]
+            current = self._probes.get(ch, 1.0)
+            value, ok = QInputDialog.getDouble(
+                self, "Custom Probe Factor",
+                f"Probe attenuation for CH{ch}:",
+                value=current, min=0.001, max=10000.0, decimals=3,
+            )
+            if ok and value > 0:
+                combo.blockSignals(True)
+                idx = combo.count() - 1
+                combo.setItemText(idx, f"{value:g}x")
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+                self._prev_probe_idx[ch] = idx
+                self._probes[ch] = value
+            else:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(self._prev_probe_idx.get(ch, 0))
+                combo.blockSignals(False)
+            return
+        combo = self._probe_combos[ch]
+        self._prev_probe_idx[ch] = combo.currentIndex()
+        self._probes[ch] = float(text.replace("x", ""))
+
+    def _show_probe_compensation(self):
+        from gui.probe_comp_dialog import ProbeCompensationDialog
+        dialog = ProbeCompensationDialog(self)
+        dialog.exec()
 
     def get_colors(self) -> dict[int, str]:
         return dict(self._colors)

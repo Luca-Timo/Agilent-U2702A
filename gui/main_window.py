@@ -67,7 +67,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.4.1-alpha"
+APP_VERSION = "0.5.1-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -275,6 +275,16 @@ class MainWindow(QMainWindow):
         settings_action.setShortcut("Ctrl+,")
         settings_action.triggered.connect(self._open_settings)
         tools_menu.addAction(settings_action)
+
+        tools_menu.addSeparator()
+
+        probe_comp_action = QAction("Probe Compensation...", self)
+        probe_comp_action.triggered.connect(self._show_probe_compensation)
+        tools_menu.addAction(probe_comp_action)
+
+        self_cal_action = QAction("Self-Calibration...", self)
+        self_cal_action.triggered.connect(self._show_self_calibration)
+        tools_menu.addAction(self_cal_action)
 
         # Help menu
         help_menu = menubar.addMenu("Help")
@@ -490,9 +500,7 @@ class MainWindow(QMainWindow):
         self._channel_panel.bwlimit_changed.connect(
             lambda ch, v: self.sig_set_bwlimit.emit(ch, v)
         )
-        self._channel_panel.probe_changed.connect(
-            lambda ch, v: self.sig_set_probe.emit(ch, v)
-        )
+        self._channel_panel.probe_changed.connect(self._on_probe_changed)
         self._channel_panel.channel_enabled.connect(self._on_channel_enabled)
 
         # --- Timebase panel → Worker ---
@@ -584,10 +592,22 @@ class MainWindow(QMainWindow):
 
     # --- Control panel callbacks ---
 
+    def _effective_vdiv(self, ch: int) -> float:
+        """Get effective V/div (raw × probe factor) for display scaling."""
+        st = self._channel_panel.get_state(ch)
+        return st.v_per_div * st.probe_factor
+
     def _on_vdiv_changed(self, ch: int, value: float):
         self.sig_set_vdiv.emit(ch, value)
-        # Update waveform display scaling (use active channel's V/div)
-        self._waveform.set_scales(value, self._timebase_panel.t_per_div)
+        # Always update this channel's effective V/div for per-channel scaling
+        probe = self._channel_panel.get_state(ch).probe_factor
+        effective = value * probe
+        self._waveform.set_channel_vdiv(ch, effective)
+        # Only update the display axis (grid) if this is the active channel
+        if ch == self._channel_panel._active_channel:
+            self._waveform.set_scales(
+                effective, self._timebase_panel.t_per_div
+            )
 
     def _on_offset_changed(self, ch: int, value: float):
         self.sig_set_offset.emit(ch, value)
@@ -604,6 +624,19 @@ class MainWindow(QMainWindow):
         self.sig_set_trigger_level.emit(value)
         self._waveform.set_trigger_level(value)
 
+    def _on_probe_changed(self, ch: int, factor: float):
+        self.sig_set_probe.emit(ch, factor)
+        self._waveform.set_channel_probe(ch, factor)
+        # Always update this channel's effective V/div for per-channel scaling
+        vdiv = self._channel_panel.get_state(ch).v_per_div
+        effective = vdiv * factor
+        self._waveform.set_channel_vdiv(ch, effective)
+        # Only refresh the display axis (grid) if this is the active channel
+        if ch == self._channel_panel._active_channel:
+            self._waveform.set_scales(
+                effective, self._timebase_panel.t_per_div
+            )
+
     def _on_trigger_slope_changed(self, slope: str):
         self.sig_set_trigger_slope.emit(slope)
         self._waveform.set_trigger_slope(slope)
@@ -615,18 +648,18 @@ class MainWindow(QMainWindow):
         if source.startswith("CHAN"):
             ch = int(source[4:])
             ch_state = self._channel_panel.get_state(ch)
+            self._waveform.set_trigger_source_channel(ch)
             self._waveform.set_trigger_source_offset(ch_state.offset)
         else:
             # EXT trigger — no channel offset
+            self._waveform.set_trigger_source_channel(1)
             self._waveform.set_trigger_source_offset(0.0)
 
     def _on_tdiv_changed(self, value: float):
         self.sig_set_tdiv.emit(value)
-        # Get current V/div from active channel
-        ch_state = self._channel_panel.get_state(
-            self._channel_panel._active_channel
-        )
-        self._waveform.set_scales(ch_state.v_per_div, value)
+        # Get effective V/div from active channel (raw × probe)
+        active = self._channel_panel._active_channel
+        self._waveform.set_scales(self._effective_vdiv(active), value)
 
     def _on_channel_enabled(self, ch: int, enabled: bool):
         self.sig_set_channel_enabled.emit(ch, enabled)
@@ -723,7 +756,11 @@ class MainWindow(QMainWindow):
                 h_lines.append((v_min + v_max) / 2)
 
         if h_lines or v_lines:
-            self._waveform.show_measurement_highlight(h_lines, v_lines, color)
+            # Scale voltage highlight lines by per-channel factor so they
+            # align with the channel's scaled waveform on screen.
+            scale = self._waveform._ch_scale(ch)
+            scaled_h = [v * scale for v in h_lines]
+            self._waveform.show_measurement_highlight(scaled_h, v_lines, color)
 
     def _on_zoom_requested(self, t_min: float, v_min: float,
                            t_max: float, v_max: float):
@@ -782,8 +819,11 @@ class MainWindow(QMainWindow):
         self.sig_set_vdiv.emit(ch, new_vdiv)
         self.sig_set_offset.emit(ch, new_offset)
 
-        # Update waveform display
-        self._waveform.set_scales(new_vdiv, new_tdiv)
+        # Update waveform display (effective V/div = raw × probe)
+        probe = self._channel_panel.get_state(ch).probe_factor
+        effective = new_vdiv * probe
+        self._waveform.set_channel_vdiv(ch, effective)
+        self._waveform.set_scales(effective, new_tdiv)
         self._waveform.set_h_position(new_h_pos)
         self._waveform.set_channel_offset(ch, new_offset)
 
@@ -813,8 +853,11 @@ class MainWindow(QMainWindow):
         self.sig_set_vdiv.emit(ch, snap['vdiv'])
         self.sig_set_offset.emit(ch, snap['offset'])
 
-        # Update waveform display
-        self._waveform.set_scales(snap['vdiv'], snap['tdiv'])
+        # Update waveform display (effective V/div = raw × probe)
+        probe = self._channel_panel.get_state(ch).probe_factor
+        effective = snap['vdiv'] * probe
+        self._waveform.set_channel_vdiv(ch, effective)
+        self._waveform.set_scales(effective, snap['tdiv'])
         self._waveform.set_h_position(snap['h_position'])
         self._waveform.set_channel_offset(ch, snap['offset'])
 
@@ -876,6 +919,11 @@ class MainWindow(QMainWindow):
             if "offset" in ch_state:
                 self._waveform.set_channel_offset(ch, ch_state["offset"])
 
+            # Set per-channel effective V/div for independent scaling
+            v = ch_state.get("v_per_div", 1.0)
+            probe = self._channel_panel.get_state(ch).probe_factor
+            self._waveform.set_channel_vdiv(ch, v * probe)
+
         # Apply timebase
         tb = state.get("timebase", {})
         if "t_per_div" in tb:
@@ -896,6 +944,7 @@ class MainWindow(QMainWindow):
         # Sync trigger level line with source channel's offset
         if self._trigger_source.startswith("CHAN"):
             src_ch = int(self._trigger_source[4:])
+            self._waveform.set_trigger_source_channel(src_ch)
             channels = state.get("channels", {})
             src_offset = channels.get(src_ch, {}).get("offset", 0.0)
             self._waveform.set_trigger_source_offset(src_offset)
@@ -907,11 +956,10 @@ class MainWindow(QMainWindow):
         if "coupling" in trig:
             self._trigger_panel.set_coupling(trig["coupling"])
 
-        # Update waveform scale
+        # Update waveform scale (effective V/div = raw × probe)
         active_ch = self._channel_panel._active_channel
-        ch_st = self._channel_panel.get_state(active_ch)
         self._waveform.set_scales(
-            ch_st.v_per_div,
+            self._effective_vdiv(active_ch),
             self._timebase_panel.t_per_div,
         )
 
@@ -1005,9 +1053,15 @@ class MainWindow(QMainWindow):
         """Open settings dialog."""
         from gui.knob_widget import RotaryKnob
 
+        # Gather current probe factors
+        current_probes = {}
+        for ch in range(1, NUM_CHANNELS + 1):
+            current_probes[ch] = self._channel_panel.get_state(ch).probe_factor
+
         dialog = SettingsDialog(
             num_channels=NUM_CHANNELS,
             current_colors=self._channel_colors,
+            current_probes=current_probes,
             knob_scroll_enabled=RotaryKnob._scroll_enabled,
             parent=self,
         )
@@ -1016,15 +1070,40 @@ class MainWindow(QMainWindow):
         dialog.knob_scroll_changed.connect(RotaryKnob.set_scroll_enabled)
 
         if dialog.exec():
-            # Apply probe settings
+            # Apply probe settings — sync to worker, channel panel, and waveform
             probes = dialog.get_probe_factors()
             for ch, factor in probes.items():
                 self.sig_set_probe.emit(ch, factor)
+                self._channel_panel._columns[ch].set_probe(factor)
+                self._waveform.set_channel_probe(ch, factor)
+                # Update per-channel effective V/div
+                vdiv = self._channel_panel.get_state(ch).v_per_div
+                self._waveform.set_channel_vdiv(ch, vdiv * factor)
+            # Refresh Y-axis with updated effective V/div
+            active = self._channel_panel._active_channel
+            self._waveform.set_scales(
+                self._effective_vdiv(active),
+                self._timebase_panel.t_per_div,
+            )
 
     def _on_color_changed(self, ch: int, color: str):
         """Handle channel color change from settings."""
         self._channel_colors[ch] = color
         self._waveform.set_channel_color(ch, color)
+
+    def _show_probe_compensation(self):
+        from gui.probe_comp_dialog import ProbeCompensationDialog
+        dialog = ProbeCompensationDialog(self)
+        dialog.exec()
+
+    def _show_self_calibration(self):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self, "Self-Calibration",
+            "Self-calibration is not supported by the U2702A.\n\n"
+            "The instrument does not expose calibration\n"
+            "SCPI commands over the USBTMC interface.",
+        )
 
     # --- Autoscale ---
 
@@ -1053,6 +1132,9 @@ class MainWindow(QMainWindow):
             self.sig_set_vdiv.emit(ch, new_vdiv)
             self.sig_set_offset.emit(ch, new_offset)
             self._waveform.set_channel_offset(ch, new_offset)
+            # Update per-channel effective V/div
+            probe = self._channel_panel.get_state(ch).probe_factor
+            self._waveform.set_channel_vdiv(ch, new_vdiv * probe)
 
             # 4. Pick T/div from first channel with detectable frequency
             if best_tdiv is None:
@@ -1066,11 +1148,10 @@ class MainWindow(QMainWindow):
             self._timebase_panel.set_tdiv(best_tdiv)
             self.sig_set_tdiv.emit(best_tdiv)
 
-        # Update waveform widget scaling
+        # Update waveform widget scaling (effective V/div = raw × probe)
         active_ch = self._channel_panel._active_channel
-        ch_st = self._channel_panel.get_state(active_ch)
         tdiv = best_tdiv if best_tdiv else self._timebase_panel.t_per_div
-        self._waveform.set_scales(ch_st.v_per_div, tdiv)
+        self._waveform.set_scales(self._effective_vdiv(active_ch), tdiv)
 
         self.statusBar().showMessage("Autoscale complete", 2000)
 

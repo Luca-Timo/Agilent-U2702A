@@ -13,7 +13,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel,
-    QComboBox, QCheckBox, QPushButton, QSizePolicy, QFrame,
+    QComboBox, QCheckBox, QPushButton, QSizePolicy, QFrame, QInputDialog,
 )
 
 from gui.theme import (
@@ -49,6 +49,9 @@ class ChannelColumn(QWidget):
         self._channel = channel
         self._color = channel_color(channel)
         self._enabled = (channel == 1)  # CH1 enabled by default
+        self._prev_probe_idx = 0
+        self._current_vdiv = VDIV_VALUES[7]  # 1.0 V/div default
+        self._probe_factor = 1.0
 
         self._setup_ui()
 
@@ -74,10 +77,19 @@ class ChannelColumn(QWidget):
         self._vdiv_knob = RotaryKnob("V/div")
         self._vdiv_knob.set_values(VDIV_VALUES, 7)
         self._vdiv_knob.set_format_func(format_vdiv)
-        self._vdiv_knob.value_changed.connect(
-            lambda v: self.vdiv_changed.emit(self._channel, v)
-        )
+        self._vdiv_knob.value_changed.connect(self._on_vdiv_changed)
         layout.addWidget(self._vdiv_knob, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Effective V/div label (shown when probe ≠ 1x)
+        self._effective_label = QLabel("")
+        self._effective_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._effective_label.setStyleSheet(
+            f"color: {self._color}; font-size: 9px; "
+            "font-family: Menlo, monospace;"
+        )
+        self._effective_label.setVisible(False)
+        layout.addWidget(self._effective_label,
+                         alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Offset knob
         self._offset_knob = RotaryKnob("Offset")
@@ -104,8 +116,8 @@ class ChannelColumn(QWidget):
         # Probe dropdown
         prb_layout = QHBoxLayout()
         self._probe_combo = QComboBox()
-        self._probe_combo.addItems(["1x", "10x"])
-        self._probe_combo.setFixedWidth(55)
+        self._probe_combo.addItems(["1x", "10x", "100x", "1000x", "Custom..."])
+        self._probe_combo.setFixedWidth(75)
         self._probe_combo.currentTextChanged.connect(self._on_probe_changed)
         prb_layout.addStretch()
         prb_layout.addWidget(self._probe_combo)
@@ -136,9 +148,48 @@ class ChannelColumn(QWidget):
         self._update_button_style()
         self.channel_toggled.emit(self._channel, self._enabled)
 
+    def _on_vdiv_changed(self, v: float):
+        self._current_vdiv = v
+        self._update_effective_label()
+        self.vdiv_changed.emit(self._channel, v)
+
     def _on_probe_changed(self, text: str):
+        if text == "Custom...":
+            value, ok = QInputDialog.getDouble(
+                self, "Custom Probe Factor",
+                f"Probe attenuation for CH{self._channel}:",
+                value=self._probe_factor, min=0.001,
+                max=10000.0, decimals=3,
+            )
+            if ok and value > 0:
+                self._probe_combo.blockSignals(True)
+                idx = self._probe_combo.count() - 1
+                self._probe_combo.setItemText(idx, f"{value:g}x")
+                self._probe_combo.setCurrentIndex(idx)
+                self._probe_combo.blockSignals(False)
+                self._prev_probe_idx = idx
+                self._probe_factor = value
+                self._update_effective_label()
+                self.probe_changed.emit(self._channel, value)
+            else:
+                self._probe_combo.blockSignals(True)
+                self._probe_combo.setCurrentIndex(self._prev_probe_idx)
+                self._probe_combo.blockSignals(False)
+            return
+        self._prev_probe_idx = self._probe_combo.currentIndex()
         factor = float(text.replace("x", ""))
+        self._probe_factor = factor
+        self._update_effective_label()
         self.probe_changed.emit(self._channel, factor)
+
+    def _update_effective_label(self):
+        """Show effective V/div when probe factor != 1x."""
+        if self._probe_factor != 1.0:
+            eff = self._current_vdiv * self._probe_factor
+            self._effective_label.setText(f"Eff: {format_vdiv(eff)}")
+            self._effective_label.setVisible(True)
+        else:
+            self._effective_label.setVisible(False)
 
     # --- Public API ---
 
@@ -152,9 +203,11 @@ class ChannelColumn(QWidget):
         self._update_button_style()
 
     def set_vdiv(self, value: float):
+        self._current_vdiv = value
         self._vdiv_knob.blockSignals(True)
         self._vdiv_knob.set_value(value)
         self._vdiv_knob.blockSignals(False)
+        self._update_effective_label()
 
     def set_offset(self, value: float):
         self._offset_knob.blockSignals(True)
@@ -170,11 +223,19 @@ class ChannelColumn(QWidget):
 
     def set_probe(self, factor: float):
         self._probe_combo.blockSignals(True)
-        text = f"{int(factor)}x"
+        text = f"{factor:g}x"
         idx = self._probe_combo.findText(text)
         if idx >= 0:
             self._probe_combo.setCurrentIndex(idx)
+        else:
+            # Custom value — update last item
+            last = self._probe_combo.count() - 1
+            self._probe_combo.setItemText(last, text)
+            self._probe_combo.setCurrentIndex(last)
+        self._prev_probe_idx = self._probe_combo.currentIndex()
+        self._probe_factor = factor
         self._probe_combo.blockSignals(False)
+        self._update_effective_label()
 
 
 class ChannelPanel(QGroupBox):
