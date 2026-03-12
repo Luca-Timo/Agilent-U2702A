@@ -67,7 +67,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.5.1-alpha"
+APP_VERSION = "0.5.2-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
