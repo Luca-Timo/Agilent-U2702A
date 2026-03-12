@@ -891,8 +891,15 @@ class MainWindow(QMainWindow):
         self._last_waveforms[waveform.channel] = waveform  # Cache for autoscale
         self._waveform.update_waveform(waveform)
 
-        # Compute and display measurements
-        meas = measurements.compute_all(waveform.voltage, waveform.time_axis)
+        # Compute and display measurements.
+        # Voltage data is in scope-space (no probe factor), so we scale
+        # by probe_factor to get probe-tip voltage for measurements.
+        probe = waveform.probe_factor
+        if probe != 1.0:
+            meas_voltage = waveform.voltage * probe
+        else:
+            meas_voltage = waveform.voltage
+        meas = measurements.compute_all(meas_voltage, waveform.time_axis)
         self._measurement_bar.update_measurements(waveform.channel, meas)
 
     @Slot(dict)

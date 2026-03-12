@@ -57,25 +57,28 @@ def parse_wav_data(data: bytes) -> np.ndarray:
 
 
 def adc_to_voltage(raw: np.ndarray, v_per_div: float,
-                   offset: float = 0.0, probe_factor: float = 1.0) -> np.ndarray:
-    """Convert raw ADC values to voltage.
+                   offset: float = 0.0) -> np.ndarray:
+    """Convert raw ADC values to scope-space voltage.
 
     The U2702A uses 8-bit unsigned ADC with center=128=0V.
     Full screen = 8 divisions vertical.
 
-    Formula: (raw - 128) * (8 * v_per_div / 256) * probe_factor + offset
+    Returns voltage as measured by the scope (at the BNC input).
+    Probe attenuation is handled separately in the display layer
+    to avoid double-application with the scope's own scaling.
+
+    Formula: (raw - 128) * (8 * v_per_div / 256) + offset
 
     Args:
         raw: uint8 ADC array.
-        v_per_div: Volts per division setting.
-        offset: Vertical offset in volts.
-        probe_factor: Probe attenuation (1.0 for 1x, 10.0 for 10x).
+        v_per_div: Volts per division setting (from CHANNEL:SCALE?).
+        offset: Vertical offset in volts (from CHANNEL:OFFSET?).
 
     Returns:
-        float64 voltage array.
+        float64 voltage array in scope-space.
     """
     volts_per_count = (NUM_VERTICAL_DIVS * v_per_div) / ADC_RANGE
-    return (raw.astype(np.float64) - ADC_CENTER) * volts_per_count * probe_factor + offset
+    return (raw.astype(np.float64) - ADC_CENTER) * volts_per_count + offset
 
 
 def make_time_axis(num_points: int, t_per_div: float,

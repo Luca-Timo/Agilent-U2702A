@@ -494,7 +494,6 @@ class AcquisitionWorker(QObject):
                     raw_adc,
                     settings.v_per_div,
                     settings.offset,
-                    settings.probe_factor,
                 )
 
                 # Build time axis — if trigger_sample is known

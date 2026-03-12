@@ -95,6 +95,7 @@ class RotaryKnob(QWidget):
         self._value_index = 0
         self._value = 0.0
         self._format_func = None  # Custom format function
+        self._display_multiplier: float = 1.0  # Scales displayed value
 
         # Continuous mode
         self._continuous = False
@@ -167,6 +168,15 @@ class RotaryKnob(QWidget):
         self._format_func = func
         self._update_display()
 
+    def set_display_multiplier(self, factor: float):
+        """Scale displayed value by *factor* (e.g. probe attenuation).
+
+        The knob stores and emits the internal (raw) value; only the
+        label text and popup editor are affected.
+        """
+        self._display_multiplier = factor
+        self._update_display()
+
     @property
     def value(self) -> float:
         return self._value
@@ -208,10 +218,11 @@ class RotaryKnob(QWidget):
 
     def _update_display(self):
         """Update the value label text."""
+        display_value = self._value * self._display_multiplier
         if self._format_func:
-            text = self._format_func(self._value)
+            text = self._format_func(display_value)
         else:
-            text = f"{self._value:.4g}"
+            text = f"{display_value:.4g}"
         self._value_label.setText(text)
         self.update()  # Repaint knob
 
@@ -406,6 +417,9 @@ class RotaryKnob(QWidget):
                 text = text[:-1].strip()
 
             value = float(text) * multiplier
+            # Convert from display space to internal raw value
+            if self._display_multiplier != 0:
+                value /= self._display_multiplier
             self.set_value(value, emit=True)
 
         except (ValueError, IndexError):

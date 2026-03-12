@@ -69,6 +69,11 @@ class WaveformWidget(pg.PlotWidget):
         # so channels with different V/div settings appear at correct sizes.
         self._ch_effective_vdivs: dict[int, float] = {}
 
+        # Cached raw (unscaled) waveform data per channel for instant
+        # replotting when scale factors change (avoids visual glitch
+        # between axis change and next acquisition update).
+        self._raw_waveforms: dict[int, tuple] = {}  # ch → (time, voltage)
+
         # Horizontal position (view offset from position knob)
         self._h_position: float = 0.0
 
@@ -282,7 +287,10 @@ class WaveformWidget(pg.PlotWidget):
         )
 
     def _ch_scale(self, ch: int) -> float:
-        """Scale factor to convert channel voltage to display space.
+        """Scale factor for probe-tip voltage → display coordinates.
+
+        Used by measurement highlights where voltage values are already
+        in probe-tip space (i.e., already multiplied by probe_factor).
 
         Each channel has its own effective V/div. The display axis uses
         the active channel's V/div (``self._v_per_div``). A channel with
@@ -294,6 +302,34 @@ class WaveformWidget(pg.PlotWidget):
         if ch_vdiv <= 0:
             return 1.0
         return self._v_per_div / ch_vdiv
+
+    def _voltage_scale(self, ch: int) -> float:
+        """Scale factor for scope-space voltage → display coordinates.
+
+        Combines inter-channel V/div normalization with probe attenuation.
+        Scope-space voltage (what the ADC measures at the BNC input) is
+        multiplied by this factor to get the display coordinate.
+
+        Equivalent to ``_ch_scale(ch) * probe_factor(ch)``.
+        """
+        return self._ch_scale(ch) * self._probe_factors.get(ch, 1.0)
+
+    def _replot_traces(self, channels: list[int] | None = None):
+        """Re-apply per-channel scaling to cached trace data.
+
+        Called when scale factors change (display V/div or a channel's
+        V/div) so existing on-screen traces update immediately without
+        waiting for the next acquisition frame.
+        """
+        chs = channels if channels is not None else list(self._raw_waveforms.keys())
+        for ch in chs:
+            if ch in self._raw_waveforms and ch in self._traces:
+                time_axis, voltage = self._raw_waveforms[ch]
+                scale = self._voltage_scale(ch)
+                if scale != 1.0:
+                    self._traces[ch].setData(time_axis, voltage * scale)
+                else:
+                    self._traces[ch].setData(time_axis, voltage)
 
     def _update_axis_range(self):
         """Update axis range based on current V/div, T/div, and position."""
@@ -334,9 +370,9 @@ class WaveformWidget(pg.PlotWidget):
 
         for ch, marker in self._gnd_markers.items():
             offset = self._channel_offsets.get(ch, 0.0)
-            # Scale offset by per-channel factor so GND marker aligns
-            # with the channel's waveform in display space.
-            marker.setPos(left_x, offset * self._ch_scale(ch))
+            # Scale offset by per-channel factor (including probe) so
+            # GND marker aligns with the channel's waveform in display space.
+            marker.setPos(left_x, offset * self._voltage_scale(ch))
 
     def _update_trigger_position(self):
         """Reposition the trigger position marker to the top edge."""
@@ -354,7 +390,7 @@ class WaveformWidget(pg.PlotWidget):
         and offset are scaled by the trigger source channel's display
         scale factor for per-channel V/div independence.
         """
-        scale = self._ch_scale(self._trigger_source_ch)
+        scale = self._voltage_scale(self._trigger_source_ch)
         screen_y = (self._trigger_level + self._trigger_source_offset) * scale
 
         if self._trigger_level_line is not None:
@@ -455,6 +491,9 @@ class WaveformWidget(pg.PlotWidget):
         self._v_per_div = v_per_div
         self._t_per_div = t_per_div
         self._update_axis_range()
+        # Re-scale all traces immediately so other channels don't
+        # visually jump while waiting for the next acquisition frame.
+        self._replot_traces()
 
     def set_h_position(self, position: float):
         """Shift the horizontal view position.
@@ -476,6 +515,8 @@ class WaveformWidget(pg.PlotWidget):
         # Reposition GND markers and trigger level with new scale factors
         self._update_gnd_positions()
         self._update_trigger_level_position()
+        # Immediately replot this channel's trace with the new scale
+        self._replot_traces([channel])
 
     def set_trigger_source_channel(self, channel: int):
         """Set which channel is the trigger source (for per-channel scaling).
@@ -520,6 +561,8 @@ class WaveformWidget(pg.PlotWidget):
                 # Remove trace
                 self.removeItem(self._traces[channel])
                 del self._traces[channel]
+                # Remove cached raw data
+                self._raw_waveforms.pop(channel, None)
                 # Remove GND marker
                 self._remove_gnd_marker(channel)
             # Hide trigger crossing marker if it belongs to this channel
@@ -680,9 +723,13 @@ class WaveformWidget(pg.PlotWidget):
             self._traces[ch] = trace
             self._create_gnd_marker(ch)
 
-        # Scale voltage data by per-channel factor so each channel's
-        # waveform appears at the correct size relative to its own V/div.
-        scale = self._ch_scale(ch)
+        # Cache raw data (scope-space) for instant replotting when scales change
+        self._raw_waveforms[ch] = (waveform.time_axis, waveform.voltage)
+
+        # Scale scope-space voltage to display coordinates.
+        # _voltage_scale includes both inter-channel V/div normalization
+        # and probe attenuation compensation.
+        scale = self._voltage_scale(ch)
         if scale != 1.0:
             display_voltage = waveform.voltage * scale
         else:
@@ -697,19 +744,20 @@ class WaveformWidget(pg.PlotWidget):
                 and 0 <= idx < len(waveform.time_axis) - 1):
             # Interpolate between sample[idx] and sample[idx+1] to find
             # the exact point where voltage = trigger level.  The crossing
-            # happens BETWEEN these two samples.
+            # happens BETWEEN these two samples.  Both voltage[] and
+            # trigger_level are in scope-space, so they compare directly.
             v0 = waveform.voltage[idx]
             v1 = waveform.voltage[idx + 1]
             t0 = waveform.time_axis[idx]
             t1 = waveform.time_axis[idx + 1]
             dv = v1 - v0
             if abs(dv) > 1e-12:
-                # The screen-space trigger level (with offset baked in)
+                # Trigger level in scope-space (with offset baked in)
                 screen_level = self._trigger_level + self._trigger_source_offset
                 frac = (screen_level - v0) / dv
                 frac = max(0.0, min(1.0, frac))  # clamp
                 cross_t = t0 + frac * (t1 - t0)
-                # Position dot in display space (scaled)
+                # Position dot in display space (scaled from scope-space)
                 cross_v = screen_level * scale
             else:
                 # Flat segment — place at midpoint (in display space)
@@ -745,11 +793,13 @@ class WaveformWidget(pg.PlotWidget):
         """Clear waveform data for a channel."""
         if channel in self._traces:
             self._traces[channel].setData([], [])
+        self._raw_waveforms.pop(channel, None)
 
     def clear_all(self):
         """Clear all waveform data."""
         for trace in self._traces.values():
             trace.setData([], [])
+        self._raw_waveforms.clear()
 
     # --- Coordinate conversion helpers ---
 
@@ -780,7 +830,7 @@ class WaveformWidget(pg.PlotWidget):
             th = self._HIT_THRESHOLD_PX
 
             # 1. Trigger level line (Y proximity anywhere on X)
-            trig_scale = self._ch_scale(self._trigger_source_ch)
+            trig_scale = self._voltage_scale(self._trigger_source_ch)
             trig_screen_y = (self._trigger_level + self._trigger_source_offset) * trig_scale
             trig_level_py = self._data_to_widget_y(trig_screen_y)
             if abs(px_y - trig_level_py) < th:
@@ -806,7 +856,7 @@ class WaveformWidget(pg.PlotWidget):
             for ch in self._gnd_markers:
                 offset = self._channel_offsets.get(ch, 0.0)
                 # GND markers are displayed at scaled offset positions
-                marker_py = self._data_to_widget_y(offset * self._ch_scale(ch))
+                marker_py = self._data_to_widget_y(offset * self._voltage_scale(ch))
                 if abs(px_x - left_px) < th * 4 and abs(px_y - marker_py) < th * 2:
                     self._dragging = ('offset', ch)
                     self.setCursor(Qt.CursorShape.SizeVerCursor)
@@ -847,8 +897,8 @@ class WaveformWidget(pg.PlotWidget):
         if self._dragging == 'trigger_level':
             data_pt = self._widget_to_data(pos)
             # Reverse-scale from display space to the trigger source
-            # channel's real voltage, then subtract source offset.
-            trig_scale = self._ch_scale(self._trigger_source_ch)
+            # channel's scope-space voltage, then subtract source offset.
+            trig_scale = self._voltage_scale(self._trigger_source_ch)
             if trig_scale > 0:
                 new_level = data_pt.y() / trig_scale - self._trigger_source_offset
             else:
@@ -880,9 +930,9 @@ class WaveformWidget(pg.PlotWidget):
         if isinstance(self._dragging, tuple) and self._dragging[0] == 'offset':
             ch = self._dragging[1]
             data_pt = self._widget_to_data(pos)
-            # Reverse-scale from display space to the channel's real
-            # voltage space so the SCPI offset stays in real volts.
-            scale = self._ch_scale(ch)
+            # Reverse-scale from display space to the channel's scope-space
+            # voltage so the SCPI offset stays in scope-space volts.
+            scale = self._voltage_scale(ch)
             new_offset = data_pt.y() / scale if scale > 0 else data_pt.y()
             self._channel_offsets[ch] = new_offset
             self._update_gnd_positions()
@@ -995,7 +1045,7 @@ class WaveformWidget(pg.PlotWidget):
         )
 
         marker = pg.TextItem(html=html, anchor=(0.0, 0.5))
-        marker.setPos(left_x, offset * self._ch_scale(channel))
+        marker.setPos(left_x, offset * self._voltage_scale(channel))
         self.addItem(marker)
         self._gnd_markers[channel] = marker
 

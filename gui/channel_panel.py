@@ -150,7 +150,6 @@ class ChannelColumn(QWidget):
 
     def _on_vdiv_changed(self, v: float):
         self._current_vdiv = v
-        self._update_effective_label()
         self.vdiv_changed.emit(self._channel, v)
 
     def _on_probe_changed(self, text: str):
@@ -169,7 +168,7 @@ class ChannelColumn(QWidget):
                 self._probe_combo.blockSignals(False)
                 self._prev_probe_idx = idx
                 self._probe_factor = value
-                self._update_effective_label()
+                self._apply_probe_to_knob()
                 self.probe_changed.emit(self._channel, value)
             else:
                 self._probe_combo.blockSignals(True)
@@ -179,17 +178,18 @@ class ChannelColumn(QWidget):
         self._prev_probe_idx = self._probe_combo.currentIndex()
         factor = float(text.replace("x", ""))
         self._probe_factor = factor
-        self._update_effective_label()
+        self._apply_probe_to_knob()
         self.probe_changed.emit(self._channel, factor)
 
-    def _update_effective_label(self):
-        """Show effective V/div when probe factor != 1x."""
-        if self._probe_factor != 1.0:
-            eff = self._current_vdiv * self._probe_factor
-            self._effective_label.setText(f"Eff: {format_vdiv(eff)}")
-            self._effective_label.setVisible(True)
-        else:
-            self._effective_label.setVisible(False)
+    def _apply_probe_to_knob(self):
+        """Update V/div knob display multiplier for current probe factor.
+
+        The knob label shows effective V/div (raw × probe) directly,
+        making the separate "Eff:" label redundant.
+        """
+        self._vdiv_knob.set_display_multiplier(self._probe_factor)
+        # Hide the old effective label — the knob itself shows effective now
+        self._effective_label.setVisible(False)
 
     # --- Public API ---
 
@@ -207,7 +207,6 @@ class ChannelColumn(QWidget):
         self._vdiv_knob.blockSignals(True)
         self._vdiv_knob.set_value(value)
         self._vdiv_knob.blockSignals(False)
-        self._update_effective_label()
 
     def set_offset(self, value: float):
         self._offset_knob.blockSignals(True)
@@ -235,7 +234,7 @@ class ChannelColumn(QWidget):
         self._prev_probe_idx = self._probe_combo.currentIndex()
         self._probe_factor = factor
         self._probe_combo.blockSignals(False)
-        self._update_effective_label()
+        self._apply_probe_to_knob()
 
 
 class ChannelPanel(QGroupBox):
