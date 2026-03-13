@@ -20,6 +20,7 @@ from processing.waveform import (
     WaveformData, parse_wav_data, adc_to_voltage, make_time_axis,
     find_trigger_crossing,
 )
+from gui.theme import NUM_CHANNELS
 
 
 @dataclass
@@ -93,7 +94,8 @@ class AcquisitionWorker(QObject):
 
         state = {}
         try:
-            for cmd in protocol.INIT_SEQUENCE:
+            init_seq = protocol.build_init_sequence(NUM_CHANNELS)
+            for cmd in init_seq:
                 if cmd.endswith("?"):
                     resp = self._bridge.query(cmd, timeout=2.0)
                     state[cmd] = resp.strip()
@@ -118,7 +120,7 @@ class AcquisitionWorker(QObject):
         }
 
         # Parse channel states
-        for ch in range(1, 3):  # U2702A has 2 channels
+        for ch in range(1, NUM_CHANNELS + 1):
             ch_state = {}
             key = f"CHANNEL{ch}:SCALE?"
             if key in raw:

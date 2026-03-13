@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.5.3-alpha
+> Current version: 0.6.0-alpha
 > Last updated: 2026-03-13
 
 ---
@@ -105,7 +105,7 @@
 
 ---
 
-## 0.5.x-alpha -- Probe & Calibration ← CURRENT
+## 0.5.x-alpha -- Probe & Calibration ✅
 
 **Goal**: Probe configuration and calibration.
 
@@ -122,16 +122,16 @@
 
 ---
 
-## 0.6.x-alpha -- Multimeter Mode
+## 0.6.x-alpha -- Multimeter Mode ← CURRENT
 
 **Goal**: Digital multimeter display mode.
 
-- [ ] Multimeter mode toggle (per channel or both)
-- [ ] Large digital voltage display (DC, AC RMS, AC+DC RMS)
-- [ ] Frequency counter display
-- [ ] Min/Max/Average tracking
-- [ ] Auto-range display
-- [ ] Switchable between scope view and multimeter view
+- [x] Multimeter mode toggle (utility panel button, disables scope-only controls)
+- [x] Large digital voltage display (DC, AC RMS, AC+DC RMS)
+- [x] Frequency counter display
+- [x] Min/Max/Average tracking (per-channel, reset button)
+- [x] Auto-range display (throttled V/div adjustment in DMM mode)
+- [x] Switchable between scope view and multimeter view (widget swap)
 
 **Milestone**: Can use scope as a basic digital multimeter.
 

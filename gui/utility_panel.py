@@ -23,6 +23,7 @@ class UtilityPanel(QGroupBox):
     measurement_bar_toggled = Signal(bool)
     cursor_mode_changed = Signal(str)
     cursor_reset_requested = Signal()
+    dmm_mode_toggled = Signal(bool)
 
     # Carousel: Off → Both → X Only → Y Only → Off …
     _CURSOR_MODES = [
@@ -65,6 +66,17 @@ class UtilityPanel(QGroupBox):
         self._meas_btn.clicked.connect(self._on_meas_toggled)
         layout.addWidget(self._meas_btn)
 
+        # --- DMM Mode toggle ---
+        self._dmm_btn = QPushButton("DMM Mode: OFF")
+        self._dmm_btn.setFixedHeight(28)
+        self._dmm_btn.setCheckable(True)
+        self._dmm_btn.setChecked(False)
+        self._dmm_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; }"
+        )
+        self._dmm_btn.clicked.connect(self._on_dmm_toggled)
+        layout.addWidget(self._dmm_btn)
+
         # --- Cursor row: carousel button + reset button ---
         cursor_row = QHBoxLayout()
         cursor_row.setSpacing(4)
@@ -104,6 +116,17 @@ class UtilityPanel(QGroupBox):
         self._meas_btn.setText(f"Measurements: {text}")
         self.measurement_bar_toggled.emit(self._meas_visible)
 
+    def _on_dmm_toggled(self):
+        active = self._dmm_btn.isChecked()
+        text = "ON" if active else "OFF"
+        self._dmm_btn.setText(f"DMM Mode: {text}")
+        # Disable scope-only buttons in DMM mode
+        self._autoscale_btn.setEnabled(not active)
+        self._meas_btn.setEnabled(not active)
+        self._cursor_btn.setEnabled(not active)
+        self._cursor_reset_btn.setEnabled(not active)
+        self.dmm_mode_toggled.emit(active)
+
     def _on_cursor_clicked(self):
         self._cursor_idx = (self._cursor_idx + 1) % len(self._CURSOR_MODES)
         mode, label = self._CURSOR_MODES[self._cursor_idx]
@@ -115,6 +138,11 @@ class UtilityPanel(QGroupBox):
     def set_autoscale_enabled(self, enabled: bool):
         """Enable/disable the autoscale button (e.g., when not connected)."""
         self._autoscale_btn.setEnabled(enabled)
+
+    def set_dmm_mode(self, active: bool):
+        """Programmatically toggle DMM mode."""
+        self._dmm_btn.setChecked(active)
+        self._on_dmm_toggled()
 
     def set_cursor_mode(self, mode: str):
         """Programmatically set the cursor mode and update the button label.

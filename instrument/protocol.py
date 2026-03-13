@@ -278,8 +278,9 @@ NOISE_FLOOR_OFF = "FUNCTION:NOISEFLOOR OFF"
 
 # --- Initialization Sequence ---
 # Captured from AMM startup. Order matters.
+# Channel queries are built dynamically via build_init_sequence().
 
-INIT_SEQUENCE = [
+_INIT_PRE_CHANNELS = [
     CLS,
     ACQ_TYPE,                          # -> "NORM"
     "TIM:MODE?",                       # -> "MAIN"
@@ -308,18 +309,29 @@ INIT_SEQUENCE = [
     "TRIGGER:TV:STANDARD?",
     "TRIGGER:TV:LINE?",
     "TRIGGER:TV:POLARITY?",
-    "CHANNEL1:OFFSET?",
-    "CHANNEL1:SCALE?",
-    "CHANNEL1:DISPLAY?",
-    "CHANNEL1:BWLIMIT?",
-    "CHANNEL1:COUPLING?",
-    "CHANNEL2:OFFSET?",
-    "CHANNEL2:SCALE?",
-    "CHANNEL2:DISPLAY?",
-    "CHANNEL2:BWLIMIT?",
-    "CHANNEL2:COUPLING?",
+]
+
+_INIT_POST_CHANNELS = [
     "TRIGGER:SWEEP AUTO",
     OPC,                               # -> 1
     NOISE_FLOOR_OFF,
     "TRIG:EDGE:SLOPE POS",
 ]
+
+_CHANNEL_QUERIES = [
+    "OFFSET?", "SCALE?", "DISPLAY?", "BWLIMIT?", "COUPLING?",
+]
+
+
+def build_init_sequence(num_channels: int = 2) -> list[str]:
+    """Build the full init sequence for the given number of channels."""
+    seq = list(_INIT_PRE_CHANNELS)
+    for ch in range(1, num_channels + 1):
+        for q in _CHANNEL_QUERIES:
+            seq.append(f"CHANNEL{ch}:{q}")
+    seq.extend(_INIT_POST_CHANNELS)
+    return seq
+
+
+# Default sequence (backward compatible)
+INIT_SEQUENCE = build_init_sequence(2)

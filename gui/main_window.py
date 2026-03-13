@@ -35,6 +35,7 @@ from gui.cursor_readout import CursorReadout
 from gui.acquisition_worker import AcquisitionWorker
 from gui.connection_dialog import ConnectionDialog
 from gui.settings_dialog import SettingsDialog
+from gui.dmm_widget import DMMWidget
 from processing.waveform import WaveformData
 from processing import measurements
 from processing.autoscale import pick_vdiv, pick_tdiv, compute_center_offset
@@ -67,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.5.3-alpha"
+APP_VERSION = "0.6.0-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -204,6 +205,9 @@ class MainWindow(QMainWindow):
         self._zoom_undo_stack: list[dict] = []
         self._time_cursors: dict[int, float] = {1: 0.0, 2: 0.0}
         self._volt_cursors: dict[int, float] = {1: 0.0, 2: 0.0}
+        self._dmm_mode: bool = False
+        self._dmm_auto_started: bool = False  # True if DMM auto-started acquisition
+        self._dmm_ar_counter: dict[int, int] = {}  # auto-range frame counter
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -404,6 +408,11 @@ class MainWindow(QMainWindow):
                                       QSizePolicy.Policy.Expanding)
         left_layout.addWidget(self._waveform, stretch=1)
 
+        # DMM display (hidden until DMM mode activated)
+        self._dmm_widget = DMMWidget(num_channels=NUM_CHANNELS)
+        self._dmm_widget.setVisible(False)
+        left_layout.addWidget(self._dmm_widget, stretch=1)
+
         # Cursor readout (between waveform and measurement bar)
         self._cursor_readout = CursorReadout()
         self._cursor_readout.setVisible(False)  # Hidden until cursors enabled
@@ -447,6 +456,9 @@ class MainWindow(QMainWindow):
         # 3. Vertical — per-channel columns (like Keysight 1/2/3/4 buttons)
         self._channel_panel = ChannelPanel(num_channels=NUM_CHANNELS)
         right_layout.addWidget(self._channel_panel)
+
+        # Scope-only panels — hidden during DMM mode
+        self._scope_panels = [self._timebase_panel, self._trigger_panel]
 
         right_layout.addStretch()
         right_scroll.setWidget(right_widget)
@@ -552,6 +564,11 @@ class MainWindow(QMainWindow):
         )
         self._utility_panel.cursor_reset_requested.connect(
             self._on_cursor_reset
+        )
+
+        # --- DMM mode ---
+        self._utility_panel.dmm_mode_toggled.connect(
+            self._on_dmm_mode_toggled
         )
 
         # --- Measurement hover → highlight lines ---
@@ -677,6 +694,7 @@ class MainWindow(QMainWindow):
         self.sig_set_channel_enabled.emit(ch, enabled)
         self._waveform.set_channel_enabled(ch, enabled)
         self._measurement_bar.set_channel_visible(ch, enabled)
+        self._dmm_widget.set_channel_visible(ch, enabled)
 
     # --- Cursor callbacks ---
 
@@ -713,6 +731,44 @@ class MainWindow(QMainWindow):
             v2 = self._waveform._volt_cursors[1]
             self._volt_cursors = {1: v1, 2: v2}
             self._cursor_readout.update_volt_cursors(v1, v2)
+
+    # --- DMM mode ---
+
+    def _on_dmm_mode_toggled(self, active: bool):
+        """Toggle between oscilloscope and DMM display modes."""
+        self._dmm_mode = active
+
+        # Swap visibility: waveform ↔ DMM widget
+        self._waveform.setVisible(not active)
+        self._dmm_widget.setVisible(active)
+
+        # Hide/show scope-only elements
+        self._cursor_readout.setVisible(
+            not active and self._waveform._cursor_mode != "off"
+        )
+        self._measurement_bar.setVisible(not active)
+        for panel in self._scope_panels:
+            panel.setVisible(not active)
+
+        if active:
+            # Reset DMM accumulators and sync channel visibility
+            self._dmm_widget.reset_all()
+            self._dmm_ar_counter.clear()
+            for ch in range(1, NUM_CHANNELS + 1):
+                enabled = ch in self._channel_panel.get_enabled_channels()
+                self._dmm_widget.set_channel_visible(ch, enabled)
+                self._dmm_widget.set_channel_color(
+                    ch, self._channel_colors.get(ch, channel_color(ch))
+                )
+            # Auto-start continuous acquisition if not already running
+            if not self._is_running and self._bridge:
+                self._dmm_auto_started = True
+                self._on_run()
+        else:
+            # Auto-stop if we auto-started for DMM
+            if self._dmm_auto_started:
+                self._dmm_auto_started = False
+                self._on_stop()
 
     def _on_cursor_moved(self, cursor_type: str, cursor_id: int, value: float):
         """Handle cursor dragged on waveform graph.
@@ -1034,6 +1090,17 @@ class MainWindow(QMainWindow):
     def _on_waveform_ready(self, waveform: WaveformData):
         """Handle new waveform data from worker."""
         self._last_waveforms[waveform.channel] = waveform  # Cache for autoscale
+
+        if self._dmm_mode:
+            # DMM path — feed data to DMM widget + auto-range
+            self._dmm_widget.update_waveform(
+                waveform.channel, waveform.voltage,
+                waveform.time_axis, waveform.probe_factor,
+            )
+            self._dmm_autorange(waveform)
+            return
+
+        # Oscilloscope path — update waveform display + measurements
         self._waveform.update_waveform(waveform)
 
         # Compute and display measurements.
@@ -1242,6 +1309,7 @@ class MainWindow(QMainWindow):
         """Handle channel color change from settings."""
         self._channel_colors[ch] = color
         self._waveform.set_channel_color(ch, color)
+        self._dmm_widget.set_channel_color(ch, color)
 
     def _show_probe_compensation(self):
         from gui.probe_comp_dialog import ProbeCompensationDialog
@@ -1306,6 +1374,43 @@ class MainWindow(QMainWindow):
         self._waveform.set_scales(self._effective_vdiv(active_ch), tdiv)
 
         self.statusBar().showMessage("Autoscale complete", 2000)
+
+    # --- DMM auto-range ---
+
+    def _dmm_autorange(self, waveform: WaveformData):
+        """Auto-adjust V/div in DMM mode to keep signal well-framed.
+
+        Throttled: only checks every 10 frames per channel.
+        Adjusts when signal uses < 25% or > 90% of the current range.
+        """
+        ch = waveform.channel
+        count = self._dmm_ar_counter.get(ch, 0) + 1
+        self._dmm_ar_counter[ch] = count
+
+        if count % 10 != 0:
+            return
+
+        signal_vpp = measurements.vpp(waveform.voltage)
+        if signal_vpp is None or signal_vpp < 1e-6:
+            return
+
+        ch_state = self._channel_panel.get_state(ch)
+        current_vdiv = ch_state.v_per_div
+        screen_range = WaveformWidget.NUM_V_DIVS * current_vdiv
+        fill = signal_vpp / screen_range
+
+        if fill < 0.25 or fill > 0.90:
+            new_vdiv = pick_vdiv(signal_vpp, VDIV_VALUES)
+            if new_vdiv != current_vdiv:
+                self._channel_panel.set_channel_state(ch, v_per_div=new_vdiv)
+                self.sig_set_vdiv.emit(ch, new_vdiv)
+                probe = ch_state.probe_factor
+                self._waveform.set_channel_vdiv(ch, new_vdiv * probe)
+                if ch == self._channel_panel._active_channel:
+                    self._waveform.set_scales(
+                        new_vdiv * probe,
+                        self._timebase_panel.t_per_div,
+                    )
 
     # --- About ---
 
