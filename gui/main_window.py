@@ -67,7 +67,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.5.2-alpha"
+APP_VERSION = "0.5.3-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -349,17 +349,22 @@ class MainWindow(QMainWindow):
 
         tb_layout.addStretch()
 
-        # FPS label
+        # FPS label (fixed width to prevent layout shift)
         self._fps_label = QLabel("")
         self._fps_label.setFixedHeight(self._TB_BTN_HEIGHT)
+        self._fps_label.setFixedWidth(72)
+        self._fps_label.setAlignment(Qt.AlignmentFlag.AlignRight
+                                     | Qt.AlignmentFlag.AlignVCenter)
         self._fps_label.setStyleSheet(
             f"color: #555555; {self._TB_FONT} padding: 0 4px;"
         )
         tb_layout.addWidget(self._fps_label)
 
-        # Trigger status indicator
+        # Trigger status indicator (fixed width to prevent layout shift)
         self._trigger_status_label = QLabel("")
         self._trigger_status_label.setFixedHeight(self._TB_BTN_HEIGHT)
+        self._trigger_status_label.setFixedWidth(72)
+        self._trigger_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._trigger_status_label.setStyleSheet(
             f"color: #888888; {self._TB_FONT} padding: 2px 6px;"
         )
@@ -545,6 +550,9 @@ class MainWindow(QMainWindow):
         self._utility_panel.cursor_mode_changed.connect(
             self._on_cursor_mode_changed
         )
+        self._utility_panel.cursor_reset_requested.connect(
+            self._on_cursor_reset
+        )
 
         # --- Measurement hover → highlight lines ---
         self._measurement_bar.value_hovered.connect(
@@ -552,6 +560,10 @@ class MainWindow(QMainWindow):
         )
         self._measurement_bar.value_unhovered.connect(
             self._waveform.hide_measurement_highlight
+        )
+        # --- Measurement click → set cursors ---
+        self._measurement_bar.value_clicked.connect(
+            self._on_measurement_clicked
         )
 
     # --- Toolbar actions ---
@@ -686,6 +698,22 @@ class MainWindow(QMainWindow):
             self._volt_cursors = {1: v1, 2: v2}
             self._cursor_readout.update_volt_cursors(v1, v2)
 
+    def _on_cursor_reset(self):
+        """Reset cursor positions to ±25% of the visible range."""
+        self._waveform.reset_cursor_positions()
+        # Sync readout with new positions
+        mode = self._waveform._cursor_mode
+        if mode in ("time", "both"):
+            t1 = self._waveform._time_cursors[0]
+            t2 = self._waveform._time_cursors[1]
+            self._time_cursors = {1: t1, 2: t2}
+            self._cursor_readout.update_time_cursors(t1, t2)
+        if mode in ("voltage", "both"):
+            v1 = self._waveform._volt_cursors[0]
+            v2 = self._waveform._volt_cursors[1]
+            self._volt_cursors = {1: v1, 2: v2}
+            self._cursor_readout.update_volt_cursors(v1, v2)
+
     def _on_cursor_moved(self, cursor_type: str, cursor_id: int, value: float):
         """Handle cursor dragged on waveform graph.
 
@@ -744,12 +772,24 @@ class MainWindow(QMainWindow):
                 v_lines.append(-period / 2)
                 v_lines.append(period / 2)
         elif display_name in ("Rise", "Fall"):
-            # Show 10% and 90% threshold levels used by the algorithm
+            # Show 10% and 90% threshold levels + time markers
             if v_min is not None and v_max is not None:
                 amplitude = v_max - v_min
                 if amplitude > 1e-9:
                     h_lines.append(v_min + 0.1 * amplitude)  # 10%
                     h_lines.append(v_min + 0.9 * amplitude)  # 90%
+            # Add vertical time markers at the crossing positions
+            wf = self._last_waveforms.get(ch)
+            if wf is not None:
+                probe = wf.probe_factor
+                meas_v = wf.voltage * probe if probe != 1.0 else wf.voltage
+                if display_name == "Rise":
+                    pos = measurements.rise_positions(meas_v, wf.time_axis)
+                else:
+                    pos = measurements.fall_positions(meas_v, wf.time_axis)
+                if pos is not None:
+                    v_lines.append(pos[0])
+                    v_lines.append(pos[1])
         elif display_name == "Duty":
             # Show midpoint threshold used by duty cycle algorithm
             if v_min is not None and v_max is not None:
@@ -761,6 +801,102 @@ class MainWindow(QMainWindow):
             scale = self._waveform._ch_scale(ch)
             scaled_h = [v * scale for v in h_lines]
             self._waveform.show_measurement_highlight(scaled_h, v_lines, color)
+
+    def _on_measurement_clicked(self, ch: int, display_name: str, meas: dict):
+        """Move user cursors to the clicked measurement's key positions.
+
+        Voltage measurements → voltage cursors.
+        Time measurements → time cursors.
+        """
+        v_min = meas.get("vmin")
+        v_max = meas.get("vmax")
+        scale = self._waveform._ch_scale(ch)
+
+        if display_name == "Vpp":
+            if v_min is not None and v_max is not None:
+                self._set_cursor_pair("voltage", v_min * scale, v_max * scale)
+        elif display_name == "Vmin":
+            if v_min is not None:
+                vmean = meas.get("vmean")
+                v2 = vmean * scale if vmean is not None else 0.0
+                self._set_cursor_pair("voltage", v_min * scale, v2)
+        elif display_name == "Vmax":
+            if v_max is not None:
+                vmean = meas.get("vmean")
+                v2 = vmean * scale if vmean is not None else 0.0
+                self._set_cursor_pair("voltage", v_max * scale, v2)
+        elif display_name == "Vrms":
+            v = meas.get("vrms")
+            if v is not None:
+                self._set_cursor_pair("voltage", v * scale, -v * scale)
+        elif display_name == "Vmean":
+            v = meas.get("vmean")
+            if v is not None:
+                self._set_cursor_pair("voltage", v * scale, 0.0)
+        elif display_name in ("Freq", "Period"):
+            period = meas.get("period")
+            if period is not None:
+                self._set_cursor_pair("time", -period / 2, period / 2)
+        elif display_name in ("Rise", "Fall"):
+            wf = self._last_waveforms.get(ch)
+            if wf is not None:
+                probe = wf.probe_factor
+                meas_v = wf.voltage * probe if probe != 1.0 else wf.voltage
+                if display_name == "Rise":
+                    pos = measurements.rise_positions(meas_v, wf.time_axis)
+                else:
+                    pos = measurements.fall_positions(meas_v, wf.time_axis)
+                if pos is not None:
+                    self._set_cursor_pair("time", pos[0], pos[1])
+                # Also place voltage cursors at 10%/90% thresholds
+                if v_min is not None and v_max is not None:
+                    amplitude = v_max - v_min
+                    if amplitude > 1e-9:
+                        thresh_lo = v_min + 0.1 * amplitude
+                        thresh_hi = v_min + 0.9 * amplitude
+                        self._set_cursor_pair("voltage",
+                                              thresh_lo * scale,
+                                              thresh_hi * scale)
+        elif display_name == "Duty":
+            # Place time cursors spanning one period
+            period = meas.get("period")
+            if period is not None:
+                self._set_cursor_pair("time", -period / 2, period / 2)
+
+    def _set_cursor_pair(self, kind: str, c1: float, c2: float):
+        """Activate cursor mode and position both cursors.
+
+        Args:
+            kind: "time" or "voltage"
+            c1: Position for cursor 1.
+            c2: Position for cursor 2.
+        """
+        current_mode = self._waveform._cursor_mode
+
+        # Determine the mode we need
+        if kind == "time":
+            need_mode = "time" if current_mode in ("off", "time") else "both"
+        else:
+            need_mode = "voltage" if current_mode in ("off", "voltage") else "both"
+
+        # Switch mode if needed
+        if current_mode != need_mode:
+            self._waveform.set_cursor_mode(need_mode)
+            self._utility_panel.set_cursor_mode(need_mode)
+            self._cursor_readout.set_mode(need_mode)
+            self._cursor_readout.setVisible(True)
+
+        # Position the cursors
+        if kind == "time":
+            self._waveform.set_time_cursor(0, c1)
+            self._waveform.set_time_cursor(1, c2)
+            self._time_cursors = {1: c1, 2: c2}
+            self._cursor_readout.update_time_cursors(c1, c2)
+        else:
+            self._waveform.set_volt_cursor(0, c1)
+            self._waveform.set_volt_cursor(1, c2)
+            self._volt_cursors = {1: c1, 2: c2}
+            self._cursor_readout.update_volt_cursors(c1, c2)
 
     def _on_zoom_requested(self, t_min: float, v_min: float,
                            t_max: float, v_max: float):
@@ -780,6 +916,13 @@ class MainWindow(QMainWindow):
 
         time_range = t_max - t_min
         volt_range = v_max - v_min
+        old_offset = ch_state.offset
+
+        # The rubberband coordinates are in display space where voltage
+        # is scaled by _voltage_scale(ch).  Convert the selected voltage
+        # range back to raw (scope-space) for V/div snapping.
+        old_vscale = self._waveform._voltage_scale(ch)
+        raw_volt_range = volt_range / old_vscale if old_vscale else volt_range
 
         # Snap T/div: smallest TDIV where full display >= selected range
         num_h = WaveformWidget.NUM_H_DIVS
@@ -789,19 +932,21 @@ class MainWindow(QMainWindow):
                 new_tdiv = tdiv
                 break
 
-        # Snap V/div: smallest VDIV where full display >= selected range
+        # Snap V/div: smallest raw VDIV where full display >= selected range
         num_v = WaveformWidget.NUM_V_DIVS
         new_vdiv = VDIV_VALUES[-1]
         for vdiv in VDIV_VALUES:
-            if num_v * vdiv >= volt_range:
+            if num_v * vdiv >= raw_volt_range:
                 new_vdiv = vdiv
                 break
 
         # H position: center of selected time range
         new_h_pos = (t_min + t_max) / 2
 
-        # V offset (active channel): shift so selection is centered at y=0
-        new_offset = -(v_min + v_max) / 2
+        # V offset: convert display-space center back to raw voltage
+        # offset so that the center of the selection maps to y = 0.
+        center_y = (v_min + v_max) / 2
+        new_offset = old_offset - center_y / old_vscale
 
         # Apply T/div + position
         self._timebase_panel.set_tdiv(new_tdiv)

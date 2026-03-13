@@ -227,6 +227,76 @@ def duty_cycle(voltage: np.ndarray, time_axis: np.ndarray) -> Optional[float]:
     return None
 
 
+def rise_positions(voltage: np.ndarray, time_axis: np.ndarray
+                   ) -> Optional[tuple[float, float]]:
+    """Return (t10, t90) time positions of the first rising edge.
+
+    Same algorithm as rise_time() but returns absolute times instead
+    of the duration.
+    """
+    if len(voltage) < 4:
+        return None
+    v_lo = float(np.min(voltage))
+    v_hi = float(np.max(voltage))
+    amplitude = v_hi - v_lo
+    if amplitude < 1e-9:
+        return None
+    thresh_10 = v_lo + 0.1 * amplitude
+    thresh_90 = v_lo + 0.9 * amplitude
+
+    t10 = None
+    i10 = None
+    for i in range(len(voltage) - 1):
+        if voltage[i] <= thresh_10 < voltage[i + 1]:
+            frac = (thresh_10 - voltage[i]) / (voltage[i + 1] - voltage[i])
+            t10 = time_axis[i] + frac * (time_axis[i + 1] - time_axis[i])
+            i10 = i
+            break
+    if t10 is None:
+        return None
+    for i in range(i10, len(voltage) - 1):
+        if voltage[i] <= thresh_90 < voltage[i + 1]:
+            frac = (thresh_90 - voltage[i]) / (voltage[i + 1] - voltage[i])
+            t90 = time_axis[i] + frac * (time_axis[i + 1] - time_axis[i])
+            return (t10, t90)
+    return None
+
+
+def fall_positions(voltage: np.ndarray, time_axis: np.ndarray
+                   ) -> Optional[tuple[float, float]]:
+    """Return (t90, t10) time positions of the first falling edge.
+
+    Same algorithm as fall_time() but returns absolute times instead
+    of the duration.
+    """
+    if len(voltage) < 4:
+        return None
+    v_lo = float(np.min(voltage))
+    v_hi = float(np.max(voltage))
+    amplitude = v_hi - v_lo
+    if amplitude < 1e-9:
+        return None
+    thresh_10 = v_lo + 0.1 * amplitude
+    thresh_90 = v_lo + 0.9 * amplitude
+
+    t90 = None
+    i90 = None
+    for i in range(len(voltage) - 1):
+        if voltage[i] >= thresh_90 > voltage[i + 1]:
+            frac = (voltage[i] - thresh_90) / (voltage[i] - voltage[i + 1])
+            t90 = time_axis[i] + frac * (time_axis[i + 1] - time_axis[i])
+            i90 = i
+            break
+    if t90 is None:
+        return None
+    for i in range(i90, len(voltage) - 1):
+        if voltage[i] >= thresh_10 > voltage[i + 1]:
+            frac = (voltage[i] - thresh_10) / (voltage[i] - voltage[i + 1])
+            t10 = time_axis[i] + frac * (time_axis[i + 1] - time_axis[i])
+            return (t90, t10)
+    return None
+
+
 def compute_all(voltage: np.ndarray, time_axis: np.ndarray) -> dict:
     """Compute all standard measurements.
 

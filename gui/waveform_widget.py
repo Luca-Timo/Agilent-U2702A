@@ -96,6 +96,8 @@ class WaveformWidget(pg.PlotWidget):
         self._cursor_mode: str = "off"  # "off", "time", "voltage", "both"
         self._time_cursors: list[float] = [0.0, 0.0]   # [t1, t2] in seconds
         self._volt_cursors: list[float] = [0.0, 0.0]   # [v1, v2] in volts
+        self._time_cursors_placed: bool = False   # True once positioned
+        self._volt_cursors_placed: bool = False   # True once positioned
         self._time_cursor_lines: list[pg.InfiniteLine | None] = [None, None]
         self._volt_cursor_lines: list[pg.InfiniteLine | None] = [None, None]
         self._time_cursor_badges: list[pg.TextItem | None] = [None, None]
@@ -614,25 +616,27 @@ class WaveformWidget(pg.PlotWidget):
     def set_cursor_mode(self, mode: str):
         """Set cursor mode: "off", "time", "voltage", or "both".
 
-        When switching to a new mode, cursors are positioned at ±25%
-        of the visible range for a useful starting point.
+        On the very first activation, cursors are positioned at ±25%
+        of the visible range.  After that, positions are preserved when
+        toggling cursor modes off and back on.
         """
-        old_mode = self._cursor_mode
         self._cursor_mode = mode
 
         show_time = mode in ("time", "both")
         show_volt = mode in ("voltage", "both")
 
-        # Set initial positions when first turning on a cursor type
-        if show_time and old_mode not in ("time", "both"):
+        # Only set default positions on the very first activation
+        if show_time and not self._time_cursors_placed:
             h_half = (self.NUM_H_DIVS / 2) * self._t_per_div
             self._time_cursors[0] = self._h_position - 0.25 * h_half
             self._time_cursors[1] = self._h_position + 0.25 * h_half
+            self._time_cursors_placed = True
 
-        if show_volt and old_mode not in ("voltage", "both"):
+        if show_volt and not self._volt_cursors_placed:
             v_half = (self.NUM_V_DIVS / 2) * self._v_per_div
             self._volt_cursors[0] = 0.25 * v_half
             self._volt_cursors[1] = -0.25 * v_half
+            self._volt_cursors_placed = True
 
         for i in range(2):
             if self._time_cursor_lines[i] is not None:
@@ -657,6 +661,7 @@ class WaveformWidget(pg.PlotWidget):
             value: Time position in seconds.
         """
         self._time_cursors[cursor_id] = value
+        self._time_cursors_placed = True
         if self._time_cursor_lines[cursor_id] is not None:
             self._time_cursor_lines[cursor_id].setPos(value)
         self._update_cursor_positions()
@@ -670,10 +675,37 @@ class WaveformWidget(pg.PlotWidget):
             value: Voltage position.
         """
         self._volt_cursors[cursor_id] = value
+        self._volt_cursors_placed = True
         if self._volt_cursor_lines[cursor_id] is not None:
             self._volt_cursor_lines[cursor_id].setPos(value)
         self._update_cursor_positions()
         self.cursor_moved.emit("voltage", cursor_id + 1, value)
+
+    def reset_cursor_positions(self):
+        """Reset cursors to ±25% of the visible range (default positions)."""
+        h_half = (self.NUM_H_DIVS / 2) * self._t_per_div
+        self._time_cursors[0] = self._h_position - 0.25 * h_half
+        self._time_cursors[1] = self._h_position + 0.25 * h_half
+
+        v_half = (self.NUM_V_DIVS / 2) * self._v_per_div
+        self._volt_cursors[0] = 0.25 * v_half
+        self._volt_cursors[1] = -0.25 * v_half
+
+        # Reposition visible cursor lines
+        for i in range(2):
+            if self._time_cursor_lines[i] is not None:
+                self._time_cursor_lines[i].setPos(self._time_cursors[i])
+            if self._volt_cursor_lines[i] is not None:
+                self._volt_cursor_lines[i].setPos(self._volt_cursors[i])
+        self._update_cursor_positions()
+
+        # Emit signals so readout updates
+        if self._cursor_mode in ("time", "both"):
+            self.cursor_moved.emit("time", 1, self._time_cursors[0])
+            self.cursor_moved.emit("time", 2, self._time_cursors[1])
+        if self._cursor_mode in ("voltage", "both"):
+            self.cursor_moved.emit("voltage", 1, self._volt_cursors[0])
+            self.cursor_moved.emit("voltage", 2, self._volt_cursors[1])
 
     def show_measurement_highlight(self, h_lines: list[float],
                                     v_lines: list[float],

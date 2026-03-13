@@ -94,6 +94,8 @@ class MeasurementBar(QWidget):
     value_hovered = Signal(int, str, dict)
     # Emitted when hover leaves a value cell
     value_unhovered = Signal()
+    # Emitted when user clicks a value cell: (channel, display_name, raw_meas_dict)
+    value_clicked = Signal(int, str, dict)
 
     def __init__(self, num_channels: int = NUM_CHANNELS, parent=None):
         super().__init__(parent)
@@ -276,7 +278,7 @@ class MeasurementBar(QWidget):
         self._apply_row_visibility()
 
     def eventFilter(self, obj, event):
-        """Detect hover enter/leave on measurement value labels."""
+        """Detect hover enter/leave and clicks on measurement value labels."""
         if event.type() == QEvent.Type.Enter:
             ch = obj.property("meas_ch")
             name = obj.property("meas_name")
@@ -287,6 +289,14 @@ class MeasurementBar(QWidget):
             return False
         if event.type() == QEvent.Type.Leave:
             self.value_unhovered.emit()
+            return False
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            ch = obj.property("meas_ch")
+            name = obj.property("meas_name")
+            if ch is not None and name is not None:
+                meas = self._last_measurements.get(ch, {})
+                if meas:
+                    self.value_clicked.emit(ch, name, meas)
             return False
         return super().eventFilter(obj, event)
 

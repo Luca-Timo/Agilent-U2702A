@@ -5,7 +5,7 @@ Sits at the top of the right sidebar, above HORIZONTAL / TRIGGER / VERTICAL.
 """
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QPushButton
+from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton
 
 from gui.theme import ACCENT_BLUE
 
@@ -22,6 +22,7 @@ class UtilityPanel(QGroupBox):
     autoscale_requested = Signal()
     measurement_bar_toggled = Signal(bool)
     cursor_mode_changed = Signal(str)
+    cursor_reset_requested = Signal()
 
     # Carousel: Off → Both → X Only → Y Only → Off …
     _CURSOR_MODES = [
@@ -64,7 +65,10 @@ class UtilityPanel(QGroupBox):
         self._meas_btn.clicked.connect(self._on_meas_toggled)
         layout.addWidget(self._meas_btn)
 
-        # --- Cursor carousel button ---
+        # --- Cursor row: carousel button + reset button ---
+        cursor_row = QHBoxLayout()
+        cursor_row.setSpacing(4)
+
         mode, label = self._CURSOR_MODES[0]
         self._cursor_btn = QPushButton(label)
         self._cursor_btn.setFixedHeight(28)
@@ -72,7 +76,24 @@ class UtilityPanel(QGroupBox):
             "QPushButton { font-size: 11px; }"
         )
         self._cursor_btn.clicked.connect(self._on_cursor_clicked)
-        layout.addWidget(self._cursor_btn)
+        cursor_row.addWidget(self._cursor_btn)
+
+        self._cursor_reset_btn = QPushButton("↺")
+        self._cursor_reset_btn.setFixedSize(40, 28)
+        self._cursor_reset_btn.setToolTip("Reset cursor positions")
+        self._cursor_reset_btn.setStyleSheet(
+            "QPushButton { font-size: 20px; color: #cccccc; "
+            "border: 1px solid #555555; border-radius: 4px; "
+            "background-color: #3a3a3a; padding-bottom: 2px; }"
+            "QPushButton:hover { background-color: #4a4a4a; "
+            "border-color: #888888; color: #ffffff; }"
+        )
+        self._cursor_reset_btn.clicked.connect(
+            lambda: self.cursor_reset_requested.emit()
+        )
+        cursor_row.addWidget(self._cursor_reset_btn)
+
+        layout.addLayout(cursor_row)
 
     def _on_autoscale(self):
         self.autoscale_requested.emit()
@@ -94,3 +115,15 @@ class UtilityPanel(QGroupBox):
     def set_autoscale_enabled(self, enabled: bool):
         """Enable/disable the autoscale button (e.g., when not connected)."""
         self._autoscale_btn.setEnabled(enabled)
+
+    def set_cursor_mode(self, mode: str):
+        """Programmatically set the cursor mode and update the button label.
+
+        Does NOT emit cursor_mode_changed (caller is responsible for
+        updating the waveform widget and readout directly).
+        """
+        for i, (m, label) in enumerate(self._CURSOR_MODES):
+            if m == mode:
+                self._cursor_idx = i
+                self._cursor_btn.setText(label)
+                return
