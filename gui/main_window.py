@@ -68,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.7.1-alpha"
+APP_VERSION = "0.7.2-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -1677,6 +1677,15 @@ class MainWindow(QMainWindow):
     def _on_reset_session(self):
         """Reset all settings to factory defaults."""
         from gui.session import default_state, apply_state
+
+        # Stop acquisition if running
+        if self._is_running:
+            self._on_stop()
+
+        # Switch back to scope mode if in DMM mode
+        if self._dmm_mode:
+            self._utility_panel.set_dmm_mode(False)
+
         apply_state(self, default_state(), restore_geometry=False)
         self._current_session_path = None
         self.statusBar().showMessage("Session reset to defaults", 3000)

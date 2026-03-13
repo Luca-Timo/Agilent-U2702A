@@ -11,7 +11,7 @@ Functions:
 import json
 from pathlib import Path
 
-SESSION_VERSION = "0.7.1"
+SESSION_VERSION = "0.7.2"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
@@ -274,6 +274,9 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
     if dmm_mode:
         win._utility_panel.set_dmm_mode(True)
     else:
+        # Switch back to scope mode if currently in DMM mode
+        if win._dmm_mode:
+            win._utility_panel.set_dmm_mode(False)
         win._measurement_bar.setVisible(meas_vis)
 
     # Restore DMM measurement mode (DC / AC RMS / AC+DC RMS)
