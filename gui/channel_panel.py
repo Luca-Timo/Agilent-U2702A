@@ -123,7 +123,7 @@ class ChannelColumn(QWidget):
         # Probe dropdown
         prb_layout = QHBoxLayout()
         self._probe_combo = QComboBox()
-        self._probe_combo.addItems(["1x", "10x", "100x", "1000x", "Custom..."])
+        self._probe_combo.addItems(["1x", "10x", "20x", "50x", "100x", "Custom..."])
         self._probe_combo.setFixedWidth(75)
         self._probe_combo.currentTextChanged.connect(self._on_probe_changed)
         prb_layout.addStretch()
@@ -215,21 +215,33 @@ class ChannelColumn(QWidget):
         self._current_vdiv = v
         self.vdiv_changed.emit(self._channel, v)
 
+    _STANDARD_PROBES = {"1x", "10x", "20x", "50x", "100x"}
+
     def _on_probe_changed(self, text: str):
         if text == "Custom...":
             value, ok = QInputDialog.getDouble(
                 self, "Custom Probe Factor",
                 f"Probe attenuation for CH{self._channel}:",
-                value=self._probe_factor, min=0.001,
-                max=10000.0, decimals=3,
+                self._probe_factor, 0.001, 10000.0, 3,
             )
             if ok and value > 0:
+                custom_text = f"{value:g}x"
                 self._probe_combo.blockSignals(True)
-                idx = self._probe_combo.count() - 1
-                self._probe_combo.setItemText(idx, f"{value:g}x")
-                self._probe_combo.setCurrentIndex(idx)
+                # Remove any previous custom entry (non-standard, non-"Custom...")
+                for i in range(self._probe_combo.count() - 2, -1, -1):
+                    if self._probe_combo.itemText(i) not in self._STANDARD_PROBES:
+                        self._probe_combo.removeItem(i)
+                # If value matches a standard entry, select it
+                std_idx = self._probe_combo.findText(custom_text)
+                if std_idx >= 0:
+                    self._probe_combo.setCurrentIndex(std_idx)
+                else:
+                    # Insert custom value before "Custom..."
+                    insert_pos = self._probe_combo.count() - 1
+                    self._probe_combo.insertItem(insert_pos, custom_text)
+                    self._probe_combo.setCurrentIndex(insert_pos)
+                self._prev_probe_idx = self._probe_combo.currentIndex()
                 self._probe_combo.blockSignals(False)
-                self._prev_probe_idx = idx
                 self._probe_factor = value
                 self._apply_probe_to_knob()
                 self.probe_changed.emit(self._channel, value)
@@ -316,15 +328,19 @@ class ChannelColumn(QWidget):
 
     def set_probe(self, factor: float):
         self._probe_combo.blockSignals(True)
+        # Remove any previous custom entry first
+        for i in range(self._probe_combo.count() - 2, -1, -1):
+            if self._probe_combo.itemText(i) not in self._STANDARD_PROBES:
+                self._probe_combo.removeItem(i)
         text = f"{factor:g}x"
         idx = self._probe_combo.findText(text)
         if idx >= 0:
             self._probe_combo.setCurrentIndex(idx)
         else:
-            # Custom value — update last item
-            last = self._probe_combo.count() - 1
-            self._probe_combo.setItemText(last, text)
-            self._probe_combo.setCurrentIndex(last)
+            # Insert custom value before "Custom..."
+            insert_pos = self._probe_combo.count() - 1
+            self._probe_combo.insertItem(insert_pos, text)
+            self._probe_combo.setCurrentIndex(insert_pos)
         self._prev_probe_idx = self._probe_combo.currentIndex()
         self._probe_factor = factor
         self._probe_combo.blockSignals(False)

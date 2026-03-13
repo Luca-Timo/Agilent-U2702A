@@ -405,3 +405,22 @@ class DMMWidget(QWidget):
     @property
     def mode(self) -> str:
         return self._mode
+
+    def set_mode(self, mode: str):
+        """Programmatically set the DMM measurement mode.
+
+        Does NOT emit mode_changed (caller is responsible for side effects).
+        """
+        if mode == self._mode:
+            return
+        self._mode = mode
+        # Update button group to reflect new mode
+        for btn in self._mode_group.buttons():
+            if btn.property("dmm_mode") == mode:
+                btn.blockSignals(True)
+                btn.setChecked(True)
+                btn.blockSignals(False)
+                break
+        # Update card labels
+        for card in self._cards.values():
+            card.set_mode_label(mode)

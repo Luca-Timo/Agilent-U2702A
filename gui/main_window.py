@@ -68,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.7.0-alpha"
+APP_VERSION = "0.7.1-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -288,6 +288,12 @@ class MainWindow(QMainWindow):
         # Recent Sessions submenu
         self._recent_menu = file_menu.addMenu("Recent Sessions")
         self._update_recent_files_menu()
+
+        file_menu.addSeparator()
+
+        reset_action = QAction("Reset Session", self)
+        reset_action.triggered.connect(self._on_reset_session)
+        file_menu.addAction(reset_action)
 
         file_menu.addSeparator()
 
@@ -1667,6 +1673,13 @@ class MainWindow(QMainWindow):
         )
         if path:
             self._load_session_from(path)
+
+    def _on_reset_session(self):
+        """Reset all settings to factory defaults."""
+        from gui.session import default_state, apply_state
+        apply_state(self, default_state(), restore_geometry=False)
+        self._current_session_path = None
+        self.statusBar().showMessage("Session reset to defaults", 3000)
 
     def _save_session_to(self, path: str):
         """Gather state and write to a JSON file."""

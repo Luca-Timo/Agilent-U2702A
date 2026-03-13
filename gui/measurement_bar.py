@@ -340,3 +340,22 @@ class MeasurementBar(QWidget):
         self._last_measurements.clear()
         for ch in self._value_labels:
             self.clear_channel(ch)
+
+    @property
+    def enabled_measurements(self) -> list[str]:
+        """Return list of currently enabled measurement names."""
+        return sorted(self._enabled_measurements)
+
+    def set_enabled_measurements(self, names: list[str]):
+        """Programmatically set which measurements are enabled.
+
+        Updates both the toggle buttons and column visibility.
+        """
+        self._enabled_measurements = set(names)
+        for display_name, btn in self._buttons.items():
+            btn.blockSignals(True)
+            btn.setChecked(display_name in self._enabled_measurements)
+            btn._update_style()
+            btn.blockSignals(False)
+        self._apply_column_visibility()
+        self._apply_row_visibility()

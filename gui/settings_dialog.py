@@ -183,26 +183,28 @@ class SettingsDialog(QDialog):
             probe_grid.addWidget(label, ch - 1, 0)
 
             combo = QComboBox()
-            combo.addItems(["1x", "10x", "100x", "1000x", "Custom..."])
-            combo.currentTextChanged.connect(
-                lambda text, c=ch: self._on_probe_combo_changed(c, text)
-            )
+            combo.addItems(["1x", "10x", "20x", "50x", "100x", "Custom..."])
 
-            # Pre-select current probe factor
+            # Pre-select current probe factor (before connecting signal)
             factor = self._probes.get(ch, 1.0)
             text = f"{factor:g}x"
             idx = combo.findText(text)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
             else:
-                # Custom value — replace last item text
-                last = combo.count() - 1
-                combo.setItemText(last, text)
-                combo.setCurrentIndex(last)
+                # Custom value — insert before "Custom..."
+                insert_pos = combo.count() - 1
+                combo.insertItem(insert_pos, text)
+                combo.setCurrentIndex(insert_pos)
             self._prev_probe_idx[ch] = combo.currentIndex()
 
             self._probe_combos[ch] = combo
             probe_grid.addWidget(combo, ch - 1, 1)
+
+            # Connect signal after setup to avoid spurious callbacks
+            combo.currentTextChanged.connect(
+                lambda text, c=ch: self._on_probe_combo_changed(c, text)
+            )
 
         note = QLabel("Note: Probe attenuation is software-only.\n"
                        "No SCPI command is sent to the instrument.")
@@ -247,6 +249,8 @@ class SettingsDialog(QDialog):
         self._knob_scroll_enabled = checked
         self.knob_scroll_changed.emit(checked)
 
+    _STANDARD_PROBES = {"1x", "10x", "20x", "50x", "100x"}
+
     def _on_probe_combo_changed(self, ch: int, text: str):
         if text == "Custom...":
             combo = self._probe_combos[ch]
@@ -254,15 +258,26 @@ class SettingsDialog(QDialog):
             value, ok = QInputDialog.getDouble(
                 self, "Custom Probe Factor",
                 f"Probe attenuation for CH{ch}:",
-                value=current, min=0.001, max=10000.0, decimals=3,
+                current, 0.001, 10000.0, 3,
             )
             if ok and value > 0:
+                custom_text = f"{value:g}x"
                 combo.blockSignals(True)
-                idx = combo.count() - 1
-                combo.setItemText(idx, f"{value:g}x")
-                combo.setCurrentIndex(idx)
+                # Remove any previous custom entry
+                for i in range(combo.count() - 2, -1, -1):
+                    if combo.itemText(i) not in self._STANDARD_PROBES:
+                        combo.removeItem(i)
+                # If value matches a standard entry, select it
+                std_idx = combo.findText(custom_text)
+                if std_idx >= 0:
+                    combo.setCurrentIndex(std_idx)
+                else:
+                    # Insert custom value before "Custom..."
+                    insert_pos = combo.count() - 1
+                    combo.insertItem(insert_pos, custom_text)
+                    combo.setCurrentIndex(insert_pos)
+                self._prev_probe_idx[ch] = combo.currentIndex()
                 combo.blockSignals(False)
-                self._prev_probe_idx[ch] = idx
                 self._probes[ch] = value
             else:
                 combo.blockSignals(True)

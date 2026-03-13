@@ -11,11 +11,52 @@ Functions:
 import json
 from pathlib import Path
 
-SESSION_VERSION = "0.7.0"
+SESSION_VERSION = "0.7.1"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
 AUTO_SAVE_PATH = CONFIG_DIR / "last_session.json"
+
+
+def default_state() -> dict:
+    """Return the factory-default session state."""
+    from gui.theme import NUM_CHANNELS, channel_color
+    channels = {}
+    for ch in range(1, NUM_CHANNELS + 1):
+        channels[str(ch)] = {
+            "enabled": ch == 1,
+            "v_per_div": 1.0,
+            "offset": 0.0,
+            "coupling": "DC",
+            "probe_factor": 1.0,
+            "current_mode": False,
+            "shunt_resistance": 1.0,
+            "color": channel_color(ch),
+        }
+    return {
+        "version": SESSION_VERSION,
+        "channels": channels,
+        "timebase": {"t_per_div": 0.001, "position": 0.0},
+        "trigger": {
+            "level": 0.0, "source": "CHAN1", "slope": "POS",
+            "sweep": "AUTO", "coupling": "DC",
+        },
+        "cursors": {
+            "mode": "off", "time": [0.0, 0.0],
+            "volt": [0.0, 0.0], "channel": 1,
+        },
+        "display": {
+            "measurements_visible": True,
+            "enabled_measurements": ["Freq", "Period", "Vmax", "Vmin", "Vpp"],
+            "dmm_mode": False,
+            "dmm_measurement_mode": "DC",
+            "dmm_hold": False,
+            "dmm_relative": False,
+            "dmm_range_locked": False,
+            "knob_scroll": True,
+        },
+        "window": {"geometry": [100, 100, 1440, 900]},
+    }
 
 
 def gather_state(win) -> dict:
@@ -71,7 +112,12 @@ def gather_state(win) -> dict:
     # --- Display ---
     display = {
         "measurements_visible": win._utility_panel.measurements_visible,
+        "enabled_measurements": win._measurement_bar.enabled_measurements,
         "dmm_mode": win._dmm_mode,
+        "dmm_measurement_mode": win._dmm_widget.mode,
+        "dmm_hold": win._hold_active,
+        "dmm_relative": win._rel_active,
+        "dmm_range_locked": win._range_locked,
         "knob_scroll": RotaryKnob._scroll_enabled,
     }
 
@@ -217,7 +263,32 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
     disp = state.get("display", {})
     meas_vis = disp.get("measurements_visible", True)
     win._utility_panel.set_measurements_visible(meas_vis)
-    win._measurement_bar.setVisible(meas_vis)
+
+    # Restore selected measurements
+    enabled_meas = disp.get("enabled_measurements")
+    if enabled_meas is not None:
+        win._measurement_bar.set_enabled_measurements(enabled_meas)
+
+    # Restore DMM mode (must come before measurement bar visibility)
+    dmm_mode = disp.get("dmm_mode", False)
+    if dmm_mode:
+        win._utility_panel.set_dmm_mode(True)
+    else:
+        win._measurement_bar.setVisible(meas_vis)
+
+    # Restore DMM measurement mode (DC / AC RMS / AC+DC RMS)
+    dmm_meas_mode = disp.get("dmm_measurement_mode")
+    if dmm_meas_mode:
+        win._dmm_widget.set_mode(dmm_meas_mode)
+
+    # Restore DMM extras (Hold / REL / Range Lock) — only when DMM mode active
+    if dmm_mode:
+        if disp.get("dmm_hold", False):
+            win._utility_panel.set_hold(True)
+        if disp.get("dmm_relative", False):
+            win._utility_panel.set_relative(True)
+        if disp.get("dmm_range_locked", False):
+            win._utility_panel.set_range_lock(True)
 
     knob_scroll = disp.get("knob_scroll", True)
     RotaryKnob.set_scroll_enabled(knob_scroll)
