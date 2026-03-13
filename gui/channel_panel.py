@@ -330,6 +330,23 @@ class ChannelColumn(QWidget):
         self._probe_combo.blockSignals(False)
         self._apply_probe_to_knob()
 
+    def set_current_mode(self, active: bool, shunt_r: float = 1.0):
+        """Programmatically set current mode and shunt resistance."""
+        self._current_mode = active
+        self._va_btn.blockSignals(True)
+        self._va_btn.setChecked(active)
+        self._va_btn.blockSignals(False)
+        self._va_btn.setText("A" if active else "V")
+        self._shunt_layout_widget.setVisible(active)
+        self._shunt_input.setText(f"{shunt_r:g}")
+        if active:
+            self._vdiv_knob.set_label("A/div")
+            self._vdiv_knob.set_format_func(format_adiv)
+        else:
+            self._vdiv_knob.set_label("V/div")
+            self._vdiv_knob.set_format_func(format_vdiv)
+        self._apply_probe_to_knob()
+
 
 class ChannelPanel(QGroupBox):
     """Vertical controls — Keysight-style per-channel columns.
@@ -429,8 +446,11 @@ class ChannelPanel(QGroupBox):
 
     def set_channel_state(self, ch: int, enabled: bool = None,
                           v_per_div: float = None, offset: float = None,
-                          coupling: str = None, bw_limit: bool = None):
-        """Set channel state programmatically (e.g., from init sequence)."""
+                          coupling: str = None, bw_limit: bool = None,
+                          probe_factor: float = None,
+                          current_mode: bool = None,
+                          shunt_resistance: float = None):
+        """Set channel state programmatically (e.g., from init or session load)."""
         state = self._states[ch]
         col = self._columns.get(ch)
 
@@ -452,3 +472,15 @@ class ChannelPanel(QGroupBox):
                 col.set_coupling(coupling)
         if bw_limit is not None:
             state.bw_limit = bw_limit
+        if probe_factor is not None:
+            state.probe_factor = probe_factor
+            if col:
+                col.set_probe(probe_factor)
+        if current_mode is not None:
+            shunt = shunt_resistance if shunt_resistance is not None else state.shunt_resistance
+            state.current_mode = current_mode
+            state.shunt_resistance = shunt
+            if col:
+                col.set_current_mode(current_mode, shunt)
+        elif shunt_resistance is not None:
+            state.shunt_resistance = shunt_resistance

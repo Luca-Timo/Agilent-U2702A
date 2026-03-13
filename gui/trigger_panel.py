@@ -108,6 +108,26 @@ class TriggerPanel(QGroupBox):
 
     # --- Public API ---
 
+    @property
+    def level(self) -> float:
+        return self._level_knob.value
+
+    @property
+    def source(self) -> str:
+        return self._source_combo.currentText()
+
+    @property
+    def slope(self) -> str:
+        return self._slope_combo.currentData()
+
+    @property
+    def sweep(self) -> str:
+        return self._sweep_combo.currentText()
+
+    @property
+    def coupling(self) -> str:
+        return self._coupling_combo.currentText()
+
     def set_level(self, value: float):
         self._level_knob.set_value(value)
 

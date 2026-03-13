@@ -234,6 +234,38 @@ class UtilityPanel(QGroupBox):
 
     # --- Public API ---
 
+    @property
+    def measurements_visible(self) -> bool:
+        return self._meas_visible
+
+    @property
+    def cursor_mode(self) -> str:
+        mode, _ = self._CURSOR_MODES[self._cursor_idx]
+        return mode
+
+    @property
+    def dmm_mode(self) -> bool:
+        return self._dmm_btn.isChecked()
+
+    @property
+    def hold_active(self) -> bool:
+        return self._hold_btn.isChecked()
+
+    @property
+    def relative_active(self) -> bool:
+        return self._rel_btn.isChecked()
+
+    @property
+    def range_locked(self) -> bool:
+        return self._range_btn.isChecked()
+
+    def set_measurements_visible(self, visible: bool):
+        """Programmatically set measurement bar visibility."""
+        self._meas_visible = visible
+        self._meas_btn.setChecked(visible)
+        text = "ON" if visible else "OFF"
+        self._meas_btn.setText(f"Measurements: {text}")
+
     def set_autoscale_enabled(self, enabled: bool):
         """Enable/disable the autoscale button (e.g., when not connected)."""
         self._autoscale_btn.setEnabled(enabled)

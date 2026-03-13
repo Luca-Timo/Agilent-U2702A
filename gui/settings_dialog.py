@@ -290,3 +290,6 @@ class SettingsDialog(QDialog):
 
     def is_knob_scroll_enabled(self) -> bool:
         return self._knob_scroll_enabled
+
+    def get_line_width(self) -> int:
+        return self._line_width_spin.value()

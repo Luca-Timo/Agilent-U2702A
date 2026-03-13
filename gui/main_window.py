@@ -8,12 +8,12 @@ acquisition worker, connection dialog, settings, and SCPI tester.
 import sys
 import os
 
-from PySide6.QtCore import Qt, Signal, Slot, QThread, QTimer
+from PySide6.QtCore import Qt, Signal, Slot, QThread, QTimer, QSettings
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QPushButton, QLabel, QMenuBar, QStatusBar, QSizePolicy,
     QFrame, QScrollArea, QApplication, QDialog, QTextEdit,
-    QDialogButtonBox, QTabWidget,
+    QDialogButtonBox, QTabWidget, QFileDialog,
 )
 from PySide6.QtGui import QAction, QFont, QShortcut, QKeySequence
 
@@ -68,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.6.2-alpha"
+APP_VERSION = "0.7.0-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -213,6 +213,9 @@ class MainWindow(QMainWindow):
         self._rel_active: bool = False
         self._rel_refs: dict[int, float] = {}  # per-channel reference primary
         self._range_locked: bool = False
+        self._settings = QSettings("AgilentU2702A", "Oscilloscope")
+        self._recent_files: list[str] = []
+        self._current_session_path: str | None = None
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -243,8 +246,11 @@ class MainWindow(QMainWindow):
             self._on_undo_zoom
         )
 
-        # Auto-show connection dialog on startup
-        QTimer.singleShot(200, self._show_connection_dialog)
+        # Load QSettings (recent files, last port/baud)
+        self._load_qsettings()
+
+        # Auto-restore last session, then show connection dialog
+        QTimer.singleShot(0, self._auto_restore_session)
 
     def _build_menu_bar(self):
         """Build the menu bar."""
@@ -261,6 +267,27 @@ class MainWindow(QMainWindow):
         disconnect_action = QAction("Disconnect", self)
         disconnect_action.triggered.connect(self._disconnect)
         file_menu.addAction(disconnect_action)
+
+        file_menu.addSeparator()
+
+        save_action = QAction("Save Session", self)
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(self._on_save_session)
+        file_menu.addAction(save_action)
+
+        save_as_action = QAction("Save Session As…", self)
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(self._on_save_session_as)
+        file_menu.addAction(save_as_action)
+
+        load_action = QAction("Load Session…", self)
+        load_action.setShortcut("Ctrl+O")
+        load_action.triggered.connect(self._on_load_session)
+        file_menu.addAction(load_action)
+
+        # Recent Sessions submenu
+        self._recent_menu = file_menu.addMenu("Recent Sessions")
+        self._update_recent_files_menu()
 
         file_menu.addSeparator()
 
@@ -1343,7 +1370,13 @@ class MainWindow(QMainWindow):
 
     def _show_connection_dialog(self):
         """Show the connection dialog."""
-        dialog = ConnectionDialog(self)
+        last_port = self._settings.value("last_port", "")
+        last_baud = self._settings.value("last_baud", 2000000, int)
+        dialog = ConnectionDialog(
+            last_port=last_port,
+            last_baud=last_baud,
+            parent=self,
+        )
         dialog.connection_established.connect(self._on_connected)
         dialog.exec()
 
@@ -1356,6 +1389,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Connected: {bridge.port} — Initializing..."
         )
+
+        # Save last port/baud for next launch
+        if hasattr(bridge, "port"):
+            self._settings.setValue("last_port", bridge.port)
+        if hasattr(bridge, "baudrate"):
+            self._settings.setValue("last_baud", bridge.baudrate)
 
         # Run init sequence
         self.sig_run_init.emit()
@@ -1546,10 +1585,143 @@ class MainWindow(QMainWindow):
         dialog = AboutDialog(self)
         dialog.exec()
 
+    # --- QSettings persistence ---
+
+    def _load_qsettings(self):
+        """Load app-level settings from QSettings."""
+        self._recent_files = self._settings.value("recent_files", [], list)
+        # Clean out stale entries
+        self._recent_files = [
+            p for p in self._recent_files
+            if isinstance(p, str) and p
+        ][:5]
+
+    def _save_qsettings(self):
+        """Save app-level settings to QSettings."""
+        self._settings.setValue("recent_files", self._recent_files[:5])
+        # Window geometry
+        geo = self.geometry()
+        self._settings.setValue("window_geometry",
+                                [geo.x(), geo.y(), geo.width(), geo.height()])
+        # Last port + baud
+        if self._bridge and hasattr(self._bridge, "port"):
+            self._settings.setValue("last_port", self._bridge.port)
+        if self._bridge and hasattr(self._bridge, "baudrate"):
+            self._settings.setValue("last_baud", self._bridge.baudrate)
+
+    def _add_recent_file(self, path: str):
+        """Add a path to the recent files list (most recent first)."""
+        # Remove duplicates
+        if path in self._recent_files:
+            self._recent_files.remove(path)
+        self._recent_files.insert(0, path)
+        self._recent_files = self._recent_files[:5]
+        self._update_recent_files_menu()
+
+    def _update_recent_files_menu(self):
+        """Rebuild the Recent Sessions submenu."""
+        self._recent_menu.clear()
+        if not self._recent_files:
+            empty = QAction("(none)", self)
+            empty.setEnabled(False)
+            self._recent_menu.addAction(empty)
+            return
+        for path in self._recent_files:
+            from pathlib import Path
+            display = Path(path).name
+            action = QAction(display, self)
+            action.setToolTip(path)
+            action.triggered.connect(
+                lambda checked, p=path: self._load_session_from(p)
+            )
+            self._recent_menu.addAction(action)
+
+    # --- Session file operations ---
+
+    def _on_save_session(self):
+        """Save to current path, or Save As if none."""
+        if self._current_session_path:
+            self._save_session_to(self._current_session_path)
+        else:
+            self._on_save_session_as()
+
+    def _on_save_session_as(self):
+        """Prompt user for a file path and save session."""
+        from gui.session import SESSION_VERSION
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Session",
+            "",
+            "Session Files (*.json);;All Files (*)",
+        )
+        if path:
+            if not path.endswith(".json"):
+                path += ".json"
+            self._save_session_to(path)
+
+    def _on_load_session(self):
+        """Prompt user to choose a session file and load it."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Session",
+            "",
+            "Session Files (*.json);;All Files (*)",
+        )
+        if path:
+            self._load_session_from(path)
+
+    def _save_session_to(self, path: str):
+        """Gather state and write to a JSON file."""
+        from gui.session import gather_state, save_to_file
+        state = gather_state(self)
+        save_to_file(state, path)
+        self._current_session_path = path
+        self._add_recent_file(path)
+        from pathlib import Path
+        self.statusBar().showMessage(
+            f"Session saved: {Path(path).name}", 3000
+        )
+
+    def _load_session_from(self, path: str):
+        """Load a session file and apply state."""
+        from gui.session import load_from_file, apply_state
+        state = load_from_file(path)
+        if not state:
+            self.statusBar().showMessage(
+                f"Failed to load session: {path}", 3000
+            )
+            return
+        apply_state(self, state)
+        self._current_session_path = path
+        self._add_recent_file(path)
+        from pathlib import Path
+        self.statusBar().showMessage(
+            f"Session loaded: {Path(path).name}", 3000
+        )
+
+    def _auto_restore_session(self):
+        """Restore last session on startup, then show connection dialog."""
+        from gui.session import AUTO_SAVE_PATH, load_from_file, apply_state
+        if AUTO_SAVE_PATH.exists():
+            state = load_from_file(str(AUTO_SAVE_PATH))
+            if state:
+                apply_state(self, state)
+        # Show connection dialog after restore
+        self._show_connection_dialog()
+
     # --- Cleanup ---
 
     def closeEvent(self, event):
-        """Clean shutdown."""
+        """Auto-save session and clean shutdown."""
+        # Auto-save current state
+        from gui.session import gather_state, save_to_file, AUTO_SAVE_PATH
+        try:
+            state = gather_state(self)
+            save_to_file(state, str(AUTO_SAVE_PATH))
+        except Exception:
+            pass  # Don't block exit on save failure
+
+        # Save QSettings
+        self._save_qsettings()
+
         if self._is_running:
             self.sig_stop.emit()
 

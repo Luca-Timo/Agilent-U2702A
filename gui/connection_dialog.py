@@ -31,7 +31,7 @@ class ConnectionDialog(QDialog):
 
     connection_established = Signal(object)  # SerialBridge
 
-    def __init__(self, parent=None):
+    def __init__(self, last_port: str = "", last_baud: int = 0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Connect to Oscilloscope")
         self.setMinimumSize(480, 340)
@@ -40,9 +40,17 @@ class ConnectionDialog(QDialog):
 
         self._bridge: Optional[SerialBridge] = None
         self._connecting = False
+        self._last_port = last_port
+        self._last_baud = last_baud
 
         self._setup_ui()
         self._refresh_ports()
+
+        # Pre-select last baud rate
+        if self._last_baud:
+            baud_idx = self._baud_combo.findText(str(self._last_baud))
+            if baud_idx >= 0:
+                self._baud_combo.setCurrentIndex(baud_idx)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -148,12 +156,19 @@ class ConnectionDialog(QDialog):
 
         if ports:
             cp2102n_found = False
-            for device, description in ports:
+            last_port_idx = -1
+            for i, (device, description) in enumerate(ports):
                 self._port_combo.addItem(description, device)
                 if "CP2102" in description or "usbserial" in device:
                     cp2102n_found = True
+                if device == self._last_port:
+                    last_port_idx = i
 
-            if cp2102n_found:
+            # Pre-select last used port if found
+            if last_port_idx >= 0:
+                self._port_combo.setCurrentIndex(last_port_idx)
+                self._log("Last used port pre-selected", "#50c878")
+            elif cp2102n_found:
                 self._log("CP2102N bridge detected", "#50c878")
             else:
                 self._log("No CP2102N found — showing all ports", "#ffcc00")

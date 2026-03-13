@@ -1,0 +1,260 @@
+"""
+Session save/load — JSON serialization of oscilloscope workspace state.
+
+Functions:
+    gather_state(win) -> dict    Collect all panel state into a dict
+    apply_state(win, state)      Restore state from a dict into all panels
+    save_to_file(state, path)    Write state dict to a JSON file
+    load_from_file(path) -> dict Read state dict from a JSON file
+"""
+
+import json
+from pathlib import Path
+
+SESSION_VERSION = "0.7.0"
+
+# Auto-save location
+CONFIG_DIR = Path.home() / ".config" / "U2702A"
+AUTO_SAVE_PATH = CONFIG_DIR / "last_session.json"
+
+
+def gather_state(win) -> dict:
+    """Collect all GUI state from MainWindow into a JSON-serializable dict.
+
+    Args:
+        win: MainWindow instance.
+
+    Returns:
+        dict matching the session file schema.
+    """
+    from gui.theme import NUM_CHANNELS
+    from gui.knob_widget import RotaryKnob
+
+    # --- Channels ---
+    channels = {}
+    for ch in range(1, NUM_CHANNELS + 1):
+        st = win._channel_panel.get_state(ch)
+        channels[str(ch)] = {
+            "enabled": st.enabled,
+            "v_per_div": st.v_per_div,
+            "offset": st.offset,
+            "coupling": st.coupling,
+            "probe_factor": st.probe_factor,
+            "current_mode": st.current_mode,
+            "shunt_resistance": st.shunt_resistance,
+            "color": win._channel_colors.get(ch, ""),
+        }
+
+    # --- Timebase ---
+    timebase = {
+        "t_per_div": win._timebase_panel.t_per_div,
+        "position": win._timebase_panel.position,
+    }
+
+    # --- Trigger ---
+    trigger = {
+        "level": win._trigger_panel.level,
+        "source": win._trigger_panel.source,
+        "slope": win._trigger_panel.slope,
+        "sweep": win._trigger_panel.sweep,
+        "coupling": win._trigger_panel.coupling,
+    }
+
+    # --- Cursors ---
+    cursors = {
+        "mode": win._waveform._cursor_mode,
+        "time": list(win._waveform._time_cursors),
+        "volt": list(win._waveform._volt_cursors),
+        "channel": win._cursor_channel,
+    }
+
+    # --- Display ---
+    display = {
+        "measurements_visible": win._utility_panel.measurements_visible,
+        "dmm_mode": win._dmm_mode,
+        "knob_scroll": RotaryKnob._scroll_enabled,
+    }
+
+    # --- Window geometry ---
+    geo = win.geometry()
+    window = {
+        "geometry": [geo.x(), geo.y(), geo.width(), geo.height()],
+    }
+
+    return {
+        "version": SESSION_VERSION,
+        "channels": channels,
+        "timebase": timebase,
+        "trigger": trigger,
+        "cursors": cursors,
+        "display": display,
+        "window": window,
+    }
+
+
+def apply_state(win, state: dict, restore_geometry: bool = True):
+    """Restore GUI state from a session dict into all MainWindow panels.
+
+    Args:
+        win: MainWindow instance.
+        state: dict loaded from session JSON file.
+        restore_geometry: If True, also restore window position/size.
+    """
+    from gui.theme import NUM_CHANNELS
+    from gui.knob_widget import RotaryKnob
+
+    if not state:
+        return
+
+    # --- Channels ---
+    channels = state.get("channels", {})
+    for ch_str, ch_data in channels.items():
+        ch = int(ch_str)
+        if ch < 1 or ch > NUM_CHANNELS:
+            continue
+
+        # Set channel panel state (handles UI widget updates)
+        win._channel_panel.set_channel_state(
+            ch,
+            enabled=ch_data.get("enabled"),
+            v_per_div=ch_data.get("v_per_div"),
+            offset=ch_data.get("offset"),
+            coupling=ch_data.get("coupling"),
+            probe_factor=ch_data.get("probe_factor"),
+            current_mode=ch_data.get("current_mode"),
+            shunt_resistance=ch_data.get("shunt_resistance"),
+        )
+
+        # Sync waveform widget
+        enabled = ch_data.get("enabled", False)
+        win._waveform.set_channel_enabled(ch, enabled)
+        win._measurement_bar.set_channel_visible(ch, enabled)
+        win._dmm_widget.set_channel_visible(ch, enabled)
+
+        offset = ch_data.get("offset", 0.0)
+        win._waveform.set_channel_offset(ch, offset)
+
+        probe = ch_data.get("probe_factor", 1.0)
+        vdiv = ch_data.get("v_per_div", 1.0)
+        win._waveform.set_channel_probe(ch, probe)
+        win._waveform.set_channel_vdiv(ch, vdiv * probe)
+
+        current_mode = ch_data.get("current_mode", False)
+        shunt = ch_data.get("shunt_resistance", 1.0)
+        win._waveform.set_channel_current_mode(ch, current_mode, shunt)
+        win._measurement_bar.set_channel_current_mode(ch, current_mode)
+        win._dmm_widget.set_channel_current_mode(ch, current_mode)
+
+        # Channel color
+        color = ch_data.get("color")
+        if color:
+            win._channel_colors[ch] = color
+            win._waveform.set_channel_color(ch, color)
+            win._dmm_widget.set_channel_color(ch, color)
+
+    # --- Timebase ---
+    tb = state.get("timebase", {})
+    tdiv = tb.get("t_per_div")
+    if tdiv is not None:
+        win._timebase_panel.set_tdiv(tdiv)
+    pos = tb.get("position")
+    if pos is not None:
+        win._timebase_panel.set_position(pos)
+        win._waveform.set_h_position(pos)
+
+    # --- Trigger (source before level — level line depends on source channel) ---
+    trig = state.get("trigger", {})
+    if "source" in trig:
+        win._trigger_panel.set_source(trig["source"])
+        win._trigger_source = trig["source"]
+        if trig["source"].startswith("CHAN"):
+            src_ch = int(trig["source"][4:])
+            win._waveform.set_trigger_source_channel(src_ch)
+            src_offset = win._channel_panel.get_state(src_ch).offset
+            win._waveform.set_trigger_source_offset(src_offset)
+    if "slope" in trig:
+        win._trigger_panel.set_slope(trig["slope"])
+        win._waveform.set_trigger_slope(trig["slope"])
+    if "sweep" in trig:
+        win._trigger_panel.set_sweep(trig["sweep"])
+    if "coupling" in trig:
+        win._trigger_panel.set_coupling(trig["coupling"])
+    if "level" in trig:
+        win._trigger_panel.set_level(trig["level"])
+        win._waveform.set_trigger_level(trig["level"])
+
+    # --- Cursors ---
+    cur = state.get("cursors", {})
+    cursor_mode = cur.get("mode", "off")
+    time_vals = cur.get("time", [0.0, 0.0])
+    volt_vals = cur.get("volt", [0.0, 0.0])
+    cursor_ch = cur.get("channel", 1)
+
+    # Set positions before enabling mode (bypasses first-activation defaults)
+    win._waveform._time_cursors = list(time_vals)
+    win._waveform._volt_cursors = list(volt_vals)
+    if time_vals != [0.0, 0.0]:
+        win._waveform._time_cursors_placed = True
+    if volt_vals != [0.0, 0.0]:
+        win._waveform._volt_cursors_placed = True
+
+    win._time_cursors = {1: time_vals[0], 2: time_vals[1]}
+    win._volt_cursors = {1: volt_vals[0], 2: volt_vals[1]}
+    win._cursor_channel = cursor_ch
+    win._cursor_readout.set_channel(cursor_ch)
+
+    win._waveform.set_cursor_mode(cursor_mode)
+    win._utility_panel.set_cursor_mode(cursor_mode)
+    win._cursor_readout.set_mode(cursor_mode)
+    win._cursor_readout.setVisible(cursor_mode != "off")
+
+    # Sync cursor channel mode (V/A + badge formatting)
+    ch_state = win._channel_panel.get_state(cursor_ch)
+    win._cursor_readout.set_current_mode(ch_state.current_mode)
+    win._waveform.set_cursor_current_mode(ch_state.current_mode, channel=cursor_ch)
+
+    # --- Display ---
+    disp = state.get("display", {})
+    meas_vis = disp.get("measurements_visible", True)
+    win._utility_panel.set_measurements_visible(meas_vis)
+    win._measurement_bar.setVisible(meas_vis)
+
+    knob_scroll = disp.get("knob_scroll", True)
+    RotaryKnob.set_scroll_enabled(knob_scroll)
+
+    # --- Update waveform display axis scaling ---
+    active_ch = win._channel_panel._active_channel
+    ch_st = win._channel_panel.get_state(active_ch)
+    effective = ch_st.v_per_div * ch_st.probe_factor
+    current_tdiv = win._timebase_panel.t_per_div
+    win._waveform.set_scales(effective, current_tdiv)
+
+    # --- Window geometry ---
+    if restore_geometry:
+        window = state.get("window", {})
+        geo = window.get("geometry")
+        if geo and len(geo) == 4:
+            win.setGeometry(geo[0], geo[1], geo[2], geo[3])
+
+
+def save_to_file(state: dict, path: str):
+    """Write session state dict to a JSON file.
+
+    Creates parent directories if they do not exist.
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def load_from_file(path: str) -> dict:
+    """Read session state dict from a JSON file.
+
+    Returns empty dict if file does not exist or is malformed.
+    """
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}

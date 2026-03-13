@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.6.2-alpha
+> Current version: 0.7.0-alpha
 > Last updated: 2026-03-13
 
 ---
@@ -122,7 +122,7 @@
 
 ---
 
-## 0.6.x-alpha -- Multimeter Mode ← CURRENT
+## 0.6.x-alpha -- Multimeter Mode ✅
 
 **Goal**: Digital multimeter display mode.
 
@@ -147,17 +147,20 @@
 
 ---
 
-## 0.7.x-alpha -- Session Files & Persistence
+## 0.7.x-alpha -- Session Files & Persistence ← CURRENT
 
 **Goal**: Save/load workspace configurations.
 
-- [ ] Session file format (JSON or YAML)
-- [ ] Save current setup: channel config, timebase, trigger, probe, display settings
-- [ ] Load session file and restore all settings
-- [ ] File > Open / Save / Save As dialogs
-- [ ] Recent files list
-- [ ] Auto-save last session on exit, restore on start
-- [ ] Settings persistence via QSettings (window position, preferences)
+- [x] Session file format (JSON schema v0.7.0)
+- [x] `gui/session.py` — gather/apply/save/load state functions
+- [x] Save current setup: channels, timebase, trigger, cursors, display, window geometry
+- [x] Load session file and restore all settings (correct order: channels → timebase → trigger → cursors → display)
+- [x] File > Save Session (Ctrl+S) / Save As (Ctrl+Shift+S) / Load (Ctrl+O)
+- [x] Recent Sessions submenu (last 5 files)
+- [x] Auto-save last session on exit (`~/.config/U2702A/last_session.json`)
+- [x] Auto-restore session on startup
+- [x] QSettings persistence (window geometry, recent files, last serial port/baud)
+- [x] Connection dialog pre-selects last used port and baud rate
 
 **Milestone**: Users can save and recall their scope setups.
 
