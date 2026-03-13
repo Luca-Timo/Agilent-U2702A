@@ -11,7 +11,7 @@ Functions:
 import json
 from pathlib import Path
 
-SESSION_VERSION = "0.7.2"
+SESSION_VERSION = "0.8.0"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"

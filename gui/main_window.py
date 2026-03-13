@@ -68,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.7.2-alpha"
+APP_VERSION = "0.8.0-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -294,6 +294,18 @@ class MainWindow(QMainWindow):
         reset_action = QAction("Reset Session", self)
         reset_action.triggered.connect(self._on_reset_session)
         file_menu.addAction(reset_action)
+
+        file_menu.addSeparator()
+
+        export_action = QAction("Export…", self)
+        export_action.setShortcut("Ctrl+E")
+        export_action.triggered.connect(self._on_export)
+        file_menu.addAction(export_action)
+
+        export_csv_action = QAction("Quick Export CSV", self)
+        export_csv_action.setShortcut("Ctrl+Shift+E")
+        export_csv_action.triggered.connect(self._on_quick_export_csv)
+        file_menu.addAction(export_csv_action)
 
         file_menu.addSeparator()
 
@@ -1689,6 +1701,125 @@ class MainWindow(QMainWindow):
         apply_state(self, default_state(), restore_geometry=False)
         self._current_session_path = None
         self.statusBar().showMessage("Session reset to defaults", 3000)
+
+    # --- Export handlers ---
+
+    def _gather_export_context(self) -> dict:
+        """Collect waveform data, measurements, and display state for export."""
+        from gui.theme import NUM_CHANNELS
+        waveforms = {}
+        measurements = {}
+        colors = {}
+        channel_settings = {}
+        for ch in range(1, NUM_CHANNELS + 1):
+            wf = self._last_waveforms.get(ch)
+            if wf is None:
+                continue
+            waveforms[ch] = wf
+            measurements[ch] = self._measurement_bar._last_measurements.get(ch, {})
+            colors[ch] = self._channel_colors.get(ch, "")
+            st = self._channel_panel.get_state(ch)
+            channel_settings[ch] = {
+                "v_per_div": st.v_per_div,
+                "offset": st.offset,
+                "probe_factor": st.probe_factor,
+            }
+        trigger = {
+            "level": self._trigger_panel.level,
+            "source": self._trigger_panel.source,
+            "slope": self._trigger_panel.slope,
+        }
+        cursors = {
+            "mode": self._waveform._cursor_mode,
+            "time": list(self._waveform._time_cursors),
+            "volt": list(self._waveform._volt_cursors),
+            "channel": self._cursor_channel,
+        }
+        return {
+            "waveforms": waveforms,
+            "measurements": measurements,
+            "colors": colors,
+            "channel_settings": channel_settings,
+            "trigger": trigger,
+            "cursors": cursors,
+        }
+
+    def _on_export(self):
+        """Open the unified export dialog (Data + Graph tabs)."""
+        from gui.export_dialog import (
+            ExportDialog, render_graph, save_graph,
+        )
+        from processing.export import export_csv, export_json
+
+        if not self._last_waveforms:
+            self.statusBar().showMessage("No waveform data to export", 3000)
+            return
+
+        ctx = self._gather_export_context()
+
+        dlg = ExportDialog(
+            has_data=True,
+            cursor_mode=self._waveform._cursor_mode,
+            parent=self,
+        )
+        if dlg.exec() != ExportDialog.DialogCode.Accepted:
+            return
+
+        from pathlib import Path
+
+        # Data export (CSV / JSON)
+        ds = dlg.data_settings
+        if ds is not None:
+            if ds.format == "csv":
+                export_csv(ctx["waveforms"], ctx["measurements"], ds.path)
+            else:
+                export_json(ctx["waveforms"], ctx["measurements"], ds.path)
+            self.statusBar().showMessage(
+                f"Exported: {Path(ds.path).name}", 3000
+            )
+            return
+
+        # Graph export (PNG / PDF)
+        gs = dlg.graph_settings
+        if gs is not None:
+            img = render_graph(
+                waveforms=ctx["waveforms"],
+                measurements=ctx["measurements"],
+                colors=ctx["colors"],
+                trigger=ctx["trigger"],
+                cursors=ctx["cursors"],
+                channel_settings=ctx["channel_settings"],
+                settings=gs,
+            )
+            save_graph(img, gs)
+            self.statusBar().showMessage(
+                f"Exported: {Path(gs.path).name}", 3000
+            )
+
+    def _on_quick_export_csv(self):
+        """Quick CSV export with file dialog (no export dialog)."""
+        from processing.export import export_csv
+        from datetime import datetime
+
+        if not self._last_waveforms:
+            self.statusBar().showMessage("No waveform data to export", 3000)
+            return
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"waveform_{ts}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", default_name, "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+
+        ctx = self._gather_export_context()
+        export_csv(ctx["waveforms"], ctx["measurements"], path)
+
+        from pathlib import Path
+        self.statusBar().showMessage(
+            f"Exported: {Path(path).name}", 3000
+        )
 
     def _save_session_to(self, path: str):
         """Gather state and write to a JSON file."""

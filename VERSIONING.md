@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.7.2-alpha
+> Current version: 0.8.0-alpha
 > Last updated: 2026-03-13
 
 ---
@@ -147,7 +147,7 @@
 
 ---
 
-## 0.7.x-alpha -- Session Files & Persistence ← CURRENT
+## 0.7.x-alpha -- Session Files & Persistence ✅
 
 **Goal**: Save/load workspace configurations.
 
@@ -166,13 +166,18 @@
 
 ---
 
-## 0.8.x-alpha -- Export & Data
+## 0.8.x-alpha -- Export & Data ← CURRENT
 
 **Goal**: Data export capabilities.
 
-- [ ] Waveform export to CSV
+- [x] Waveform export to CSV (with metadata header + measurements)
+- [x] Waveform export to JSON (structured with settings + measurements)
+- [x] Export Graph as PNG (dark/light theme, configurable elements)
+- [x] Export Graph as PDF (A4 landscape, print-friendly light mode)
+- [x] Unified Export dialog (Data tab: CSV/JSON, Graph tab: PNG/PDF)
+- [x] Configurable graph export (measurements, cursors, trigger, V/div & T/div labels, GND markers)
+- [x] Quick Export CSV shortcut (Ctrl+Shift+E)
 - [ ] Waveform export to NumPy (.npy)
-- [ ] Screenshot export (PNG)
 - [ ] FFT math function display
 - [ ] Waveform averaging
 - [ ] Reference waveform storage/recall
