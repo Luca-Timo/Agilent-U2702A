@@ -24,6 +24,9 @@ class UtilityPanel(QGroupBox):
     cursor_mode_changed = Signal(str)
     cursor_reset_requested = Signal()
     dmm_mode_toggled = Signal(bool)
+    hold_toggled = Signal(bool)
+    relative_toggled = Signal(bool)
+    range_lock_toggled = Signal(bool)
 
     # Carousel: Off → Both → X Only → Y Only → Off …
     _CURSOR_MODES = [
@@ -77,6 +80,36 @@ class UtilityPanel(QGroupBox):
         self._dmm_btn.clicked.connect(self._on_dmm_toggled)
         layout.addWidget(self._dmm_btn)
 
+        # --- DMM extras row: Hold / REL / Range Lock ---
+        dmm_row = QHBoxLayout()
+        dmm_row.setSpacing(4)
+
+        self._hold_btn = QPushButton("Hold")
+        self._hold_btn.setFixedHeight(28)
+        self._hold_btn.setCheckable(True)
+        self._hold_btn.setEnabled(False)
+        self._hold_btn.setStyleSheet(self._dmm_extra_style(False))
+        self._hold_btn.clicked.connect(self._on_hold_toggled)
+        dmm_row.addWidget(self._hold_btn)
+
+        self._rel_btn = QPushButton("REL")
+        self._rel_btn.setFixedHeight(28)
+        self._rel_btn.setCheckable(True)
+        self._rel_btn.setEnabled(False)
+        self._rel_btn.setStyleSheet(self._dmm_extra_style(False))
+        self._rel_btn.clicked.connect(self._on_rel_toggled)
+        dmm_row.addWidget(self._rel_btn)
+
+        self._range_btn = QPushButton("Range: AUTO")
+        self._range_btn.setFixedHeight(28)
+        self._range_btn.setCheckable(True)
+        self._range_btn.setEnabled(False)
+        self._range_btn.setStyleSheet(self._dmm_extra_style(False))
+        self._range_btn.clicked.connect(self._on_range_lock_toggled)
+        dmm_row.addWidget(self._range_btn)
+
+        layout.addLayout(dmm_row)
+
         # --- Cursor row: carousel button + reset button ---
         cursor_row = QHBoxLayout()
         cursor_row.setSpacing(4)
@@ -107,6 +140,33 @@ class UtilityPanel(QGroupBox):
 
         layout.addLayout(cursor_row)
 
+    @staticmethod
+    def _dmm_extra_style(active_color: str | None = None) -> str:
+        """Stylesheet for DMM extra buttons (Hold/REL/Range Lock).
+
+        Args:
+            active_color: Background colour when checked, or None for default.
+        """
+        base = (
+            "QPushButton { font-size: 10px; font-weight: bold; "
+            "border: 1px solid #555555; border-radius: 4px; "
+            "padding: 2px 8px; color: #cccccc; background-color: #2a2a2a; }"
+            "QPushButton:hover { border-color: #888888; }"
+            "QPushButton:disabled { color: #555555; border-color: #3a3a3a; "
+            "background-color: #222222; }"
+        )
+        if active_color:
+            base += (
+                f"QPushButton:checked {{ background-color: {active_color}; "
+                f"color: white; border-color: {active_color}; }}"
+            )
+        else:
+            base += (
+                "QPushButton:checked { background-color: #555555; "
+                "color: white; border-color: #777777; }"
+            )
+        return base
+
     def _on_autoscale(self):
         self.autoscale_requested.emit()
 
@@ -125,7 +185,46 @@ class UtilityPanel(QGroupBox):
         self._meas_btn.setEnabled(not active)
         self._cursor_btn.setEnabled(not active)
         self._cursor_reset_btn.setEnabled(not active)
+        # Enable/disable DMM extras
+        self._hold_btn.setEnabled(active)
+        self._rel_btn.setEnabled(active)
+        self._range_btn.setEnabled(active)
+        # Deactivate DMM extras when leaving DMM mode
+        if not active:
+            if self._hold_btn.isChecked():
+                self._hold_btn.setChecked(False)
+                self._on_hold_toggled()
+            if self._rel_btn.isChecked():
+                self._rel_btn.setChecked(False)
+                self._on_rel_toggled()
+            if self._range_btn.isChecked():
+                self._range_btn.setChecked(False)
+                self._on_range_lock_toggled()
         self.dmm_mode_toggled.emit(active)
+
+    def _on_hold_toggled(self):
+        active = self._hold_btn.isChecked()
+        self._hold_btn.setText("HOLD" if active else "Hold")
+        self._hold_btn.setStyleSheet(
+            self._dmm_extra_style("#ccaa00" if active else None)
+        )
+        self.hold_toggled.emit(active)
+
+    def _on_rel_toggled(self):
+        active = self._rel_btn.isChecked()
+        self._rel_btn.setText("Δ REL" if active else "REL")
+        self._rel_btn.setStyleSheet(
+            self._dmm_extra_style(ACCENT_BLUE if active else None)
+        )
+        self.relative_toggled.emit(active)
+
+    def _on_range_lock_toggled(self):
+        active = self._range_btn.isChecked()
+        self._range_btn.setText("Range: LOCK" if active else "Range: AUTO")
+        self._range_btn.setStyleSheet(
+            self._dmm_extra_style("#cc5500" if active else None)
+        )
+        self.range_lock_toggled.emit(active)
 
     def _on_cursor_clicked(self):
         self._cursor_idx = (self._cursor_idx + 1) % len(self._CURSOR_MODES)
@@ -155,3 +254,18 @@ class UtilityPanel(QGroupBox):
                 self._cursor_idx = i
                 self._cursor_btn.setText(label)
                 return
+
+    def set_hold(self, active: bool):
+        """Programmatically set Hold state."""
+        self._hold_btn.setChecked(active)
+        self._on_hold_toggled()
+
+    def set_relative(self, active: bool):
+        """Programmatically set REL state."""
+        self._rel_btn.setChecked(active)
+        self._on_rel_toggled()
+
+    def set_range_lock(self, active: bool):
+        """Programmatically set Range Lock state."""
+        self._range_btn.setChecked(active)
+        self._on_range_lock_toggled()

@@ -122,6 +122,16 @@ def format_frequency(value: float) -> str:
     return format_si(value, "Hz")
 
 
+def format_current(value: float) -> str:
+    """Format a current value."""
+    return format_si(value, "A")
+
+
+def format_adiv(value: float) -> str:
+    """Format A/div value (current mode)."""
+    return format_si(value, "A/div")
+
+
 def format_percent(value: float) -> str:
     """Format a percentage value (e.g. duty cycle)."""
     return f"{value:.1f}%"

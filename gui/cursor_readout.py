@@ -4,12 +4,15 @@ Cursor readout widget — displays ΔT, 1/ΔT, ΔV for active cursors.
 Compact bar below the waveform, shown only when cursors are active.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QSizePolicy,
+    QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
 )
 
-from gui.theme import format_voltage, format_frequency, format_time
+from gui.theme import (
+    NUM_CHANNELS, channel_color,
+    format_voltage, format_current, format_frequency, format_time,
+)
 
 
 class CursorReadout(QFrame):
@@ -17,13 +20,21 @@ class CursorReadout(QFrame):
 
     Layout (single row, compact):
         Time mode:    C1: -500 µs   C2: +500 µs   ΔT: 1.00 ms   1/ΔT: 1.00 kHz
-        Voltage mode: C1: 1.20 V    C2: -800 mV    ΔV: 2.00 V
+        Voltage mode: [CH1] C1: 1.20 V  C2: -800 mV  ΔV: 2.00 V
         Both mode:    Both rows combined into one line
+
+    The channel selector determines which channel the Y cursors
+    are measuring, so the readout converts display-space positions
+    to that channel's physical units (V or A).
     """
+
+    channel_selected = Signal(int)  # Emitted when user cycles channel button
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._mode = "off"
+        self._current_mode = False  # True = display amps instead of volts
+        self._selected_ch = 1       # Which channel the Y cursors measure
 
         self.setStyleSheet(
             "QFrame { border: 1px solid #333333; border-radius: 3px; "
@@ -71,7 +82,14 @@ class CursorReadout(QFrame):
         self._inv_dt_value.setStyleSheet(value_style)
         self._inv_dt_value.setMinimumWidth(80)
 
-        # Voltage cursor labels
+        # Channel selector button — determines which channel Y cursors measure
+        self._ch_btn = QPushButton("CH1")
+        self._ch_btn.setFixedSize(38, 20)
+        self._ch_btn.setToolTip("Select channel for Y cursor measurement")
+        self._update_ch_btn_style()
+        self._ch_btn.clicked.connect(self._on_ch_clicked)
+
+        # Voltage/current cursor labels
         self._vc1_label = QLabel("C1:")
         self._vc1_label.setStyleSheet(label_style)
         self._vc1_value = QLabel("---")
@@ -104,6 +122,7 @@ class CursorReadout(QFrame):
             self._inv_dt_label, self._inv_dt_value,
         ]
         self._volt_widgets = [
+            self._ch_btn,
             self._vc1_label, self._vc1_value,
             self._vc2_label, self._vc2_value,
             self._dv_label, self._dv_value,
@@ -117,6 +136,17 @@ class CursorReadout(QFrame):
         layout.addStretch()
 
         self._apply_visibility()
+
+    def _update_ch_btn_style(self):
+        """Update channel button colour to match the selected channel."""
+        color = channel_color(self._selected_ch)
+        self._ch_btn.setStyleSheet(
+            f"QPushButton {{ font-size: 9px; font-weight: bold; "
+            f"color: white; background-color: {color}; "
+            f"border: 1px solid {color}; border-radius: 3px; "
+            f"padding: 0px; }}"
+            f"QPushButton:hover {{ border-color: #ffffff; }}"
+        )
 
     def set_mode(self, mode: str):
         """Set cursor mode: "off", "time", "voltage", "both"."""
@@ -149,9 +179,42 @@ class CursorReadout(QFrame):
             self._inv_dt_value.setText("---")
 
     def update_volt_cursors(self, v1: float, v2: float):
-        """Update voltage cursor readout values."""
-        self._vc1_value.setText(format_voltage(v1))
-        self._vc2_value.setText(format_voltage(v2))
+        """Update voltage/current cursor readout values.
+
+        Values should already be converted to physical units for the
+        selected channel (volts or amps) by the caller.
+        """
+        fmt = format_current if self._current_mode else format_voltage
+        self._vc1_value.setText(fmt(v1))
+        self._vc2_value.setText(fmt(v2))
 
         dv = abs(v2 - v1)
-        self._dv_value.setText(format_voltage(dv))
+        self._dv_value.setText(fmt(dv))
+
+    def _on_ch_clicked(self):
+        """Cycle through channels: CH1 → CH2 → CH1 → …"""
+        self._selected_ch = (self._selected_ch % NUM_CHANNELS) + 1
+        self._ch_btn.setText(f"CH{self._selected_ch}")
+        self._update_ch_btn_style()
+        self.channel_selected.emit(self._selected_ch)
+
+    def set_current_mode(self, active: bool):
+        """Set the unit display mode (voltage or current).
+
+        Called by main_window when the selected channel's current mode
+        is known, so the readout shows the correct ΔV / ΔI label and
+        uses the right formatter.
+        """
+        self._current_mode = active
+        self._dv_label.setText("ΔI:" if active else "ΔV:")
+
+    def set_channel(self, ch: int):
+        """Programmatically select a channel (without emitting signal)."""
+        self._selected_ch = ch
+        self._ch_btn.setText(f"CH{ch}")
+        self._update_ch_btn_style()
+
+    @property
+    def selected_channel(self) -> int:
+        """Currently selected channel for Y cursor measurement."""
+        return self._selected_ch

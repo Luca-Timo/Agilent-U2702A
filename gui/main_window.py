@@ -68,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.6.0-alpha"
+APP_VERSION = "0.6.2-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -208,6 +208,11 @@ class MainWindow(QMainWindow):
         self._dmm_mode: bool = False
         self._dmm_auto_started: bool = False  # True if DMM auto-started acquisition
         self._dmm_ar_counter: dict[int, int] = {}  # auto-range frame counter
+        self._cursor_channel: int = 1    # which channel Y cursors measure
+        self._hold_active: bool = False
+        self._rel_active: bool = False
+        self._rel_refs: dict[int, float] = {}  # per-channel reference primary
+        self._range_locked: bool = False
 
         # Initialize default colors
         for ch in range(1, NUM_CHANNELS + 1):
@@ -565,10 +570,22 @@ class MainWindow(QMainWindow):
         self._utility_panel.cursor_reset_requested.connect(
             self._on_cursor_reset
         )
+        self._cursor_readout.channel_selected.connect(
+            self._on_cursor_channel_selected
+        )
 
         # --- DMM mode ---
         self._utility_panel.dmm_mode_toggled.connect(
             self._on_dmm_mode_toggled
+        )
+        self._utility_panel.hold_toggled.connect(self._on_hold_toggled)
+        self._utility_panel.relative_toggled.connect(self._on_relative_toggled)
+        self._utility_panel.range_lock_toggled.connect(self._on_range_lock_toggled)
+        self._dmm_widget.mode_changed.connect(self._on_dmm_measurement_mode_changed)
+
+        # --- Current mode ---
+        self._channel_panel.current_mode_changed.connect(
+            self._on_current_mode_changed
         )
 
         # --- Measurement hover → highlight lines ---
@@ -637,6 +654,9 @@ class MainWindow(QMainWindow):
             self._waveform.set_scales(
                 effective, self._timebase_panel.t_per_div
             )
+        # Refresh cursor readout (V/div ratio changed)
+        if self._waveform._cursor_mode in ("voltage", "both"):
+            self._push_volt_cursor_readout()
 
     def _on_offset_changed(self, ch: int, value: float):
         self.sig_set_offset.emit(ch, value)
@@ -665,6 +685,9 @@ class MainWindow(QMainWindow):
             self._waveform.set_scales(
                 effective, self._timebase_panel.t_per_div
             )
+        # Refresh cursor readout (effective V/div changed)
+        if self._waveform._cursor_mode in ("voltage", "both"):
+            self._push_volt_cursor_readout()
 
     def _on_trigger_slope_changed(self, slope: str):
         self.sig_set_trigger_slope.emit(slope)
@@ -714,7 +737,7 @@ class MainWindow(QMainWindow):
             v1 = self._waveform._volt_cursors[0]
             v2 = self._waveform._volt_cursors[1]
             self._volt_cursors = {1: v1, 2: v2}
-            self._cursor_readout.update_volt_cursors(v1, v2)
+            self._push_volt_cursor_readout()
 
     def _on_cursor_reset(self):
         """Reset cursor positions to ±25% of the visible range."""
@@ -730,7 +753,7 @@ class MainWindow(QMainWindow):
             v1 = self._waveform._volt_cursors[0]
             v2 = self._waveform._volt_cursors[1]
             self._volt_cursors = {1: v1, 2: v2}
-            self._cursor_readout.update_volt_cursors(v1, v2)
+            self._push_volt_cursor_readout()
 
     # --- DMM mode ---
 
@@ -746,7 +769,9 @@ class MainWindow(QMainWindow):
         self._cursor_readout.setVisible(
             not active and self._waveform._cursor_mode != "off"
         )
-        self._measurement_bar.setVisible(not active)
+        # Respect the measurement toggle state when restoring
+        meas_visible = self._utility_panel._meas_visible if not active else False
+        self._measurement_bar.setVisible(meas_visible)
         for panel in self._scope_panels:
             panel.setVisible(not active)
 
@@ -770,6 +795,89 @@ class MainWindow(QMainWindow):
                 self._dmm_auto_started = False
                 self._on_stop()
 
+    def _on_hold_toggled(self, active: bool):
+        """Toggle Hold — freeze DMM readings."""
+        self._hold_active = active
+        self._dmm_widget.set_hold_indicator(active)
+
+    def _on_relative_toggled(self, active: bool):
+        """Toggle Relative (Δ) mode — show delta from reference."""
+        self._rel_active = active
+        if active:
+            # Capture current primary reading per channel as reference
+            self._rel_refs.clear()
+            for ch, acc in self._dmm_widget._accumulators.items():
+                last = acc.reading
+                if last is not None:
+                    self._rel_refs[ch] = last.primary
+            self._dmm_widget.set_relative_mode(True, self._rel_refs)
+        else:
+            self._rel_refs.clear()
+            self._dmm_widget.set_relative_mode(False)
+
+    def _on_range_lock_toggled(self, active: bool):
+        """Toggle Range Lock — disable DMM auto-range."""
+        self._range_locked = active
+
+    def _on_dmm_measurement_mode_changed(self, mode: str):
+        """Handle DC/AC mode change — auto-deactivate REL (values incomparable)."""
+        if self._rel_active:
+            self._utility_panel.set_relative(False)
+
+    def _on_current_mode_changed(self, ch: int, active: bool, shunt_r: float):
+        """Handle current mode toggle from channel panel."""
+        self._waveform.set_channel_current_mode(ch, active, shunt_r)
+        self._measurement_bar.set_channel_current_mode(ch, active)
+        self._dmm_widget.set_channel_current_mode(ch, active)
+        # If cursor channel matches, update readout unit and re-push values
+        if ch == self._cursor_channel:
+            self._sync_cursor_channel_mode()
+
+    def _on_cursor_channel_selected(self, ch: int):
+        """Handle channel selector click on cursor readout bar."""
+        self._cursor_channel = ch
+        self._sync_cursor_channel_mode()
+
+    def _sync_cursor_channel_mode(self):
+        """Sync cursor readout unit and waveform badges to the cursor channel."""
+        ch = self._cursor_channel
+        ch_state = self._channel_panel.get_state(ch)
+        is_current = ch_state.current_mode
+        self._cursor_readout.set_current_mode(is_current)
+        self._waveform.set_cursor_current_mode(is_current, channel=ch)
+        # Re-push converted values
+        mode = self._waveform._cursor_mode
+        if mode in ("voltage", "both"):
+            self._push_volt_cursor_readout()
+
+    def _cursor_display_to_physical(self, display_y: float) -> float:
+        """Convert a Y cursor display position to physical units.
+
+        Uses the cursor channel's effective V/div, probe factor, and
+        shunt resistance to convert from display-space to physical
+        volts (or amps if current mode).
+        """
+        ch = self._cursor_channel
+        display_vdiv = self._waveform._v_per_div
+        effective_vdiv = self._waveform._ch_effective_vdivs.get(ch, display_vdiv)
+
+        if display_vdiv <= 0:
+            return display_y
+
+        physical = display_y * effective_vdiv / display_vdiv
+
+        ch_state = self._channel_panel.get_state(ch)
+        if ch_state.current_mode and ch_state.shunt_resistance > 0:
+            physical /= ch_state.shunt_resistance
+
+        return physical
+
+    def _push_volt_cursor_readout(self):
+        """Convert display-space cursor values to physical and push to readout."""
+        v1 = self._cursor_display_to_physical(self._volt_cursors[1])
+        v2 = self._cursor_display_to_physical(self._volt_cursors[2])
+        self._cursor_readout.update_volt_cursors(v1, v2)
+
     def _on_cursor_moved(self, cursor_type: str, cursor_id: int, value: float):
         """Handle cursor dragged on waveform graph.
 
@@ -785,9 +893,7 @@ class MainWindow(QMainWindow):
             )
         elif cursor_type == "voltage":
             self._volt_cursors[cursor_id] = value
-            self._cursor_readout.update_volt_cursors(
-                self._volt_cursors[1], self._volt_cursors[2]
-            )
+            self._push_volt_cursor_readout()
 
     def _on_measurement_hovered(self, ch: int, display_name: str, meas: dict):
         """Show highlight lines on waveform when hovering a measurement value.
@@ -952,7 +1058,7 @@ class MainWindow(QMainWindow):
             self._waveform.set_volt_cursor(0, c1)
             self._waveform.set_volt_cursor(1, c2)
             self._volt_cursors = {1: c1, 2: c2}
-            self._cursor_readout.update_volt_cursors(c1, c2)
+            self._push_volt_cursor_readout()
 
     def _on_zoom_requested(self, t_min: float, v_min: float,
                            t_max: float, v_max: float):
@@ -1090,14 +1196,28 @@ class MainWindow(QMainWindow):
     def _on_waveform_ready(self, waveform: WaveformData):
         """Handle new waveform data from worker."""
         self._last_waveforms[waveform.channel] = waveform  # Cache for autoscale
+        ch = waveform.channel
+        ch_state = self._channel_panel.get_state(ch)
 
         if self._dmm_mode:
-            # DMM path — feed data to DMM widget + auto-range
-            self._dmm_widget.update_waveform(
-                waveform.channel, waveform.voltage,
-                waveform.time_axis, waveform.probe_factor,
-            )
+            # Always auto-range (unless locked), even when held
             self._dmm_autorange(waveform)
+
+            # Hold gate — skip DMM display update when held
+            if self._hold_active:
+                return
+
+            # DMM path — feed data to DMM widget
+            probe = waveform.probe_factor
+            if ch_state.current_mode:
+                # I = V × probe / R  →  pass effective factor as probe_factor
+                effective_probe = probe / ch_state.shunt_resistance
+            else:
+                effective_probe = probe
+            self._dmm_widget.update_waveform(
+                ch, waveform.voltage,
+                waveform.time_axis, effective_probe,
+            )
             return
 
         # Oscilloscope path — update waveform display + measurements
@@ -1111,8 +1231,13 @@ class MainWindow(QMainWindow):
             meas_voltage = waveform.voltage * probe
         else:
             meas_voltage = waveform.voltage
+
+        # Convert to current if channel is in current mode
+        if ch_state.current_mode and ch_state.shunt_resistance > 0:
+            meas_voltage = meas_voltage / ch_state.shunt_resistance
+
         meas = measurements.compute_all(meas_voltage, waveform.time_axis)
-        self._measurement_bar.update_measurements(waveform.channel, meas)
+        self._measurement_bar.update_measurements(ch, meas)
 
     @Slot(dict)
     def _on_init_complete(self, state: dict):
@@ -1383,6 +1508,8 @@ class MainWindow(QMainWindow):
         Throttled: only checks every 10 frames per channel.
         Adjusts when signal uses < 25% or > 90% of the current range.
         """
+        if self._range_locked:
+            return
         ch = waveform.channel
         count = self._dmm_ar_counter.get(ch, 0) + 1
         self._dmm_ar_counter[ch] = count

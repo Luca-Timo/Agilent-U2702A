@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.6.0-alpha
+> Current version: 0.6.2-alpha
 > Last updated: 2026-03-13
 
 ---
@@ -132,6 +132,16 @@
 - [x] Min/Max/Average tracking (per-channel, reset button)
 - [x] Auto-range display (throttled V/div adjustment in DMM mode)
 - [x] Switchable between scope view and multimeter view (widget swap)
+- [x] Current measurement mode (I = V/R via shunt resistor, scope + DMM)
+- [x] Per-channel V/A toggle with selectable shunt resistance
+- [x] Hold (freeze DMM readings)
+- [x] Relative / Δ REL mode (delta from captured reference)
+- [x] Range Lock (disable auto-range in DMM mode)
+- [x] Channel-aware Y cursor readout (channel selector converts to correct V/div, probe, shunt)
+- [x] Cursor waveform badges show physical values for selected channel
+- [x] Shunt resistance changed from dropdown to free-text input (Ω)
+- [x] V/A toggle button visibility and sizing improvements
+- [x] Column layout stability (shunt widget retains space when hidden)
 
 **Milestone**: Can use scope as a basic digital multimeter.
 
@@ -216,6 +226,7 @@
 
 ## Nice to Have (Post 1.0 / Future)
 
+- [ ] Automated probe compensation (square wave output + measure overshoot/settling to guide adjustment)
 - [ ] External trigger input support
 - [ ] TV trigger mode
 - [ ] XY display mode

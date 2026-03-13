@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.theme import (
-    channel_color, format_voltage, format_frequency, format_time,
-    format_percent, NUM_CHANNELS, TEXT_SECONDARY, ACCENT_BLUE,
+    channel_color, format_voltage, format_current, format_frequency,
+    format_time, format_percent, NUM_CHANNELS, TEXT_SECONDARY, ACCENT_BLUE,
 )
 
 
@@ -113,6 +113,9 @@ class MeasurementBar(QWidget):
 
         # Raw measurement values per channel (for hover cursors)
         self._last_measurements: dict[int, dict] = {}
+
+        # Per-channel current mode (voltage vs current display)
+        self._current_mode: dict[int, bool] = {}
 
         self._build_ui()
 
@@ -300,18 +303,27 @@ class MeasurementBar(QWidget):
             return False
         return super().eventFilter(obj, event)
 
+    def set_channel_current_mode(self, channel: int, active: bool):
+        """Toggle current mode display for a channel."""
+        self._current_mode[channel] = active
+
     def update_measurements(self, channel: int, meas: dict):
         """Update measurements for a channel."""
         if channel not in self._value_labels:
             return
         self._last_measurements[channel] = dict(meas)
+        is_current = self._current_mode.get(channel, False)
         for display_name, key, fmt_func in MEASUREMENT_TYPES:
             lbl = self._value_labels[channel].get(display_name)
             if lbl is None:
                 continue
             val = meas.get(key)
             if val is not None:
-                lbl.setText(fmt_func(val))
+                # Use format_current for voltage-type measurements in current mode
+                if is_current and fmt_func is format_voltage:
+                    lbl.setText(format_current(val))
+                else:
+                    lbl.setText(fmt_func(val))
             else:
                 lbl.setText("---")
 

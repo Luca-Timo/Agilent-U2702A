@@ -63,6 +63,8 @@ class WaveformWidget(pg.PlotWidget):
         self._channel_offsets: dict[int, float] = {}
         self._enabled_channels: set[int] = set()
         self._probe_factors: dict[int, float] = {}
+        self._current_mode: dict[int, bool] = {}
+        self._shunt_resistance: dict[int, float] = {}
 
         # Per-channel effective V/div (raw × probe) for independent scaling.
         # Each channel's waveform is scaled by display_vdiv / ch_vdiv
@@ -94,6 +96,8 @@ class WaveformWidget(pg.PlotWidget):
 
         # Cursor state
         self._cursor_mode: str = "off"  # "off", "time", "voltage", "both"
+        self._cursor_current_mode: bool = False  # True = badge shows amps
+        self._cursor_channel: int = 1            # which channel badges reference
         self._time_cursors: list[float] = [0.0, 0.0]   # [t1, t2] in seconds
         self._volt_cursors: list[float] = [0.0, 0.0]   # [v1, v2] in volts
         self._time_cursors_placed: bool = False   # True once positioned
@@ -312,9 +316,14 @@ class WaveformWidget(pg.PlotWidget):
         Scope-space voltage (what the ADC measures at the BNC input) is
         multiplied by this factor to get the display coordinate.
 
-        Equivalent to ``_ch_scale(ch) * probe_factor(ch)``.
+        In current mode, also divides by shunt resistance (I = V/R).
         """
-        return self._ch_scale(ch) * self._probe_factors.get(ch, 1.0)
+        scale = self._ch_scale(ch) * self._probe_factors.get(ch, 1.0)
+        if self._current_mode.get(ch, False):
+            shunt_r = self._shunt_resistance.get(ch, 1.0)
+            if shunt_r > 0:
+                scale /= shunt_r
+        return scale
 
     def _replot_traces(self, channels: list[int] | None = None):
         """Re-apply per-channel scaling to cached trace data.
@@ -458,12 +467,26 @@ class WaveformWidget(pg.PlotWidget):
             f'">{label} {value}</div>'
         )
 
+    def _cursor_display_to_physical(self, display_y: float) -> float:
+        """Convert a Y cursor display position to the cursor channel's units."""
+        ch = self._cursor_channel
+        ch_vdiv = self._ch_effective_vdivs.get(ch, self._v_per_div)
+        if self._v_per_div <= 0:
+            return display_y
+        physical = display_y * ch_vdiv / self._v_per_div
+        if self._current_mode.get(ch, False):
+            shunt_r = self._shunt_resistance.get(ch, 1.0)
+            if shunt_r > 0:
+                physical /= shunt_r
+        return physical
+
     def _update_cursor_positions(self):
         """Reposition cursor badges at plot edges after axis changes."""
-        from gui.theme import format_time, format_voltage
+        from gui.theme import format_time, format_voltage, format_current
 
         top_y = (self.NUM_V_DIVS / 2) * self._v_per_div
         right_x = self._h_position + (self.NUM_H_DIVS / 2) * self._t_per_div
+        v_fmt = format_current if self._cursor_current_mode else format_voltage
 
         for i in range(2):
             # Time cursor badge at top edge
@@ -480,9 +503,10 @@ class WaveformWidget(pg.PlotWidget):
             if self._volt_cursor_badges[i] is not None:
                 self._volt_cursor_badges[i].setPos(right_x, self._volt_cursors[i])
                 if self._volt_cursor_badges[i].isVisible():
+                    phys = self._cursor_display_to_physical(self._volt_cursors[i])
                     self._volt_cursor_badges[i].setHtml(
                         self._cursor_badge_html(
-                            f"C{i+1}", format_voltage(self._volt_cursors[i])
+                            f"C{i+1}", v_fmt(phys)
                         )
                     )
 
@@ -545,6 +569,16 @@ class WaveformWidget(pg.PlotWidget):
         if channel in self._gnd_markers:
             self._remove_gnd_marker(channel)
             self._create_gnd_marker(channel)
+
+    def set_channel_current_mode(self, channel: int, active: bool,
+                                  shunt_r: float = 1.0):
+        """Toggle current measurement mode for a channel.
+
+        When active, waveform display scales by 1/shunt_r to show amps.
+        """
+        self._current_mode[channel] = active
+        self._shunt_resistance[channel] = shunt_r
+        self._replot_traces([channel])
 
     def set_channel_enabled(self, channel: int, enabled: bool):
         """Show or hide a channel trace and its GND marker."""
@@ -680,6 +714,18 @@ class WaveformWidget(pg.PlotWidget):
             self._volt_cursor_lines[cursor_id].setPos(value)
         self._update_cursor_positions()
         self.cursor_moved.emit("voltage", cursor_id + 1, value)
+
+    def set_cursor_current_mode(self, active: bool, channel: int | None = None):
+        """Toggle cursor badge units between voltage and current.
+
+        Args:
+            active: True for amps, False for volts.
+            channel: If provided, also update the cursor channel reference.
+        """
+        self._cursor_current_mode = active
+        if channel is not None:
+            self._cursor_channel = channel
+        self._update_cursor_positions()
 
     def reset_cursor_positions(self):
         """Reset cursors to ±25% of the visible range (default positions)."""

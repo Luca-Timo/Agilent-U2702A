@@ -14,10 +14,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QLabel,
     QComboBox, QCheckBox, QPushButton, QSizePolicy, QFrame, QInputDialog,
+    QLineEdit,
 )
+from PySide6.QtGui import QDoubleValidator
 
 from gui.theme import (
-    VDIV_VALUES, format_vdiv, format_voltage, channel_color, NUM_CHANNELS,
+    VDIV_VALUES, format_vdiv, format_adiv, format_voltage, format_current,
+    channel_color, NUM_CHANNELS,
 )
 from gui.knob_widget import RotaryKnob
 
@@ -32,6 +35,9 @@ class ChannelState:
     coupling: str = "DC"
     bw_limit: bool = False
     probe_factor: float = 1.0
+    current_mode: bool = False        # True = display as current (I = V/R)
+    shunt_resistance: float = 1.0     # Ohms (for current mode)
+
 
 
 class ChannelColumn(QWidget):
@@ -43,6 +49,7 @@ class ChannelColumn(QWidget):
     coupling_changed = Signal(int, str)
     bwlimit_changed = Signal(int, bool)
     probe_changed = Signal(int, float)
+    current_mode_changed = Signal(int, bool, float)  # ch, active, shunt_R
 
     def __init__(self, channel: int, parent=None):
         super().__init__(parent)
@@ -124,6 +131,62 @@ class ChannelColumn(QWidget):
         prb_layout.addStretch()
         layout.addLayout(prb_layout)
 
+        # V/A mode toggle — current measurement via shunt resistor
+        self._current_mode = False
+        va_layout = QHBoxLayout()
+        va_layout.setSpacing(2)
+        va_layout.addStretch()
+        self._va_btn = QPushButton("V")
+        self._va_btn.setFixedSize(38, 30)
+        self._va_btn.setCheckable(True)
+        self._va_btn.setToolTip("Toggle voltage / current mode")
+        self._va_btn.setStyleSheet(
+            "QPushButton { font-size: 16px; font-weight: bold; "
+            "color: #ffffff; background-color: #3a3a3a; "
+            "border: 1px solid #888888; border-radius: 4px; "
+            "padding: 2px 0px; }"
+            "QPushButton:hover { background-color: #4a4a4a; "
+            "border-color: #aaaaaa; }"
+            "QPushButton:checked { background-color: #4a9eff; color: white; "
+            "border-color: #4a9eff; }"
+        )
+        self._va_btn.clicked.connect(self._on_va_toggled)
+        va_layout.addWidget(self._va_btn)
+        va_layout.addStretch()
+        layout.addLayout(va_layout)
+
+        # Shunt resistance text input (hidden until current mode ON)
+        shunt_layout = QHBoxLayout()
+        shunt_layout.setSpacing(4)
+        shunt_layout.addStretch()
+        self._shunt_input = QLineEdit("1")
+        self._shunt_input.setFixedWidth(50)
+        self._shunt_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._shunt_input.setValidator(QDoubleValidator(0.0001, 100000.0, 4))
+        self._shunt_input.setToolTip("Shunt resistance (Ω)")
+        self._shunt_input.setStyleSheet(
+            "QLineEdit { font-size: 11px; color: #ffffff; "
+            "background-color: #2a2a2a; border: 1px solid #666666; "
+            "border-radius: 3px; padding: 2px; }"
+            "QLineEdit:focus { border-color: #4a9eff; }"
+        )
+        self._shunt_input.editingFinished.connect(self._on_shunt_edited)
+        shunt_label = QLabel("Ω")
+        shunt_label.setStyleSheet(
+            "color: #aaaaaa; font-size: 11px; font-weight: bold;"
+        )
+        shunt_layout.addWidget(self._shunt_input)
+        shunt_layout.addWidget(shunt_label)
+        shunt_layout.addStretch()
+        self._shunt_layout_widget = QWidget()
+        self._shunt_layout_widget.setLayout(shunt_layout)
+        self._shunt_layout_widget.setVisible(False)
+        # Keep space reserved when hidden so the other column doesn't shift
+        sp = self._shunt_layout_widget.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)
+        self._shunt_layout_widget.setSizePolicy(sp)
+        layout.addWidget(self._shunt_layout_widget)
+
         layout.addStretch()
 
     def _update_button_style(self):
@@ -180,6 +243,37 @@ class ChannelColumn(QWidget):
         self._probe_factor = factor
         self._apply_probe_to_knob()
         self.probe_changed.emit(self._channel, factor)
+
+    def _on_va_toggled(self):
+        self._current_mode = self._va_btn.isChecked()
+        self._va_btn.setText("A" if self._current_mode else "V")
+        self._shunt_layout_widget.setVisible(self._current_mode)
+        # Switch knob label and format function
+        if self._current_mode:
+            self._vdiv_knob.set_label("A/div")
+            self._vdiv_knob.set_format_func(format_adiv)
+        else:
+            self._vdiv_knob.set_label("V/div")
+            self._vdiv_knob.set_format_func(format_vdiv)
+        self._apply_probe_to_knob()
+        shunt = self._get_shunt_value() if self._current_mode else 1.0
+        self.current_mode_changed.emit(
+            self._channel, self._current_mode, shunt
+        )
+
+    def _get_shunt_value(self) -> float:
+        """Parse the shunt resistance text input, falling back to 1 Ω."""
+        try:
+            val = float(self._shunt_input.text())
+            return val if val > 0 else 1.0
+        except ValueError:
+            return 1.0
+
+    def _on_shunt_edited(self):
+        """Handle shunt resistance text input confirmed (Enter / focus lost)."""
+        if self._current_mode:
+            shunt = self._get_shunt_value()
+            self.current_mode_changed.emit(self._channel, True, shunt)
 
     def _apply_probe_to_knob(self):
         """Update V/div knob display multiplier for current probe factor.
@@ -257,6 +351,7 @@ class ChannelPanel(QGroupBox):
     coupling_changed = Signal(int, str)
     bwlimit_changed = Signal(int, bool)
     probe_changed = Signal(int, float)
+    current_mode_changed = Signal(int, bool, float)  # ch, active, shunt_R
 
     def __init__(self, num_channels: int = NUM_CHANNELS, parent=None):
         super().__init__("VERTICAL", parent)
@@ -287,6 +382,7 @@ class ChannelPanel(QGroupBox):
             col.offset_changed.connect(self._on_offset_changed)
             col.coupling_changed.connect(self._on_coupling_changed)
             col.probe_changed.connect(self._on_probe_changed)
+            col.current_mode_changed.connect(self._on_current_mode_changed)
 
             self._columns[ch] = col
             layout.addWidget(col)
@@ -317,6 +413,11 @@ class ChannelPanel(QGroupBox):
     def _on_probe_changed(self, ch: int, factor: float):
         self._states[ch].probe_factor = factor
         self.probe_changed.emit(ch, factor)
+
+    def _on_current_mode_changed(self, ch: int, active: bool, shunt_r: float):
+        self._states[ch].current_mode = active
+        self._states[ch].shunt_resistance = shunt_r
+        self.current_mode_changed.emit(ch, active, shunt_r)
 
     # --- Public API ---
 

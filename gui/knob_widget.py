@@ -163,6 +163,11 @@ class RotaryKnob(QWidget):
         self._center_zero = (min_val < 0 and max_val > 0)
         self._update_display()
 
+    def set_label(self, text: str):
+        """Update the knob label text (e.g. 'V/div' → 'A/div')."""
+        self._label = text
+        self._label_widget.setText(text)
+
     def set_format_func(self, func):
         """Set custom format function for the value display."""
         self._format_func = func

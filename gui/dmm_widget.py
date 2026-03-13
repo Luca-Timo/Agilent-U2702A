@@ -14,8 +14,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QFont
 
 from gui.theme import (
-    NUM_CHANNELS, channel_color, format_voltage, format_frequency,
-    BG_PLOT, BG_DARK, TEXT_SECONDARY, ACCENT_BLUE,
+    NUM_CHANNELS, channel_color, format_voltage, format_current,
+    format_frequency, BG_PLOT, BG_DARK, TEXT_SECONDARY, ACCENT_BLUE,
 )
 from processing.dmm import DMMAccumulator, DMMReading, DMMMode
 
@@ -38,6 +38,7 @@ class ChannelDMMCard(QFrame):
         super().__init__(parent)
         self._channel = channel
         self._color = channel_color(channel)
+        self._is_current_mode = False
 
         self.setStyleSheet(
             f"ChannelDMMCard {{ background-color: {BG_PLOT}; "
@@ -54,13 +55,47 @@ class ChannelDMMCard(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(4)
 
-        # Channel label
+        # Channel label + mode label row
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+
         self._ch_label = QLabel(f"CH{self._channel}")
         self._ch_label.setStyleSheet(
             f"color: {self._color}; font-size: 14px; font-weight: bold; "
             "border: none;"
         )
-        layout.addWidget(self._ch_label)
+        header_row.addWidget(self._ch_label)
+
+        self._mode_label = QLabel("DC")
+        self._mode_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 12px; "
+            "font-family: Menlo, monospace; border: none;"
+        )
+        header_row.addWidget(self._mode_label)
+
+        # HOLD badge (hidden by default)
+        self._hold_badge = QLabel("HOLD")
+        self._hold_badge.setStyleSheet(
+            "color: #000; background-color: #ffcc00; font-size: 10px; "
+            "font-weight: bold; border-radius: 3px; padding: 1px 6px; "
+            "border: none;"
+        )
+        self._hold_badge.setVisible(False)
+        header_row.addWidget(self._hold_badge)
+
+        # Δ REL badge (hidden by default)
+        self._rel_badge = QLabel("Δ REL")
+        self._rel_badge.setStyleSheet(
+            f"color: white; background-color: {ACCENT_BLUE}; font-size: 10px; "
+            "font-weight: bold; border-radius: 3px; padding: 1px 6px; "
+            "border: none;"
+        )
+        self._rel_badge.setVisible(False)
+        header_row.addWidget(self._rel_badge)
+
+        header_row.addStretch()
+
+        layout.addLayout(header_row)
 
         layout.addStretch(1)
 
@@ -116,13 +151,37 @@ class ChannelDMMCard(QFrame):
 
     # --- Public ---
 
+    def _fmt(self, value: float) -> str:
+        """Format a value using the appropriate unit (V or A)."""
+        return format_current(value) if self._is_current_mode else format_voltage(value)
+
     def update_reading(self, reading: DMMReading):
         """Update all display fields from a DMMReading."""
-        self._primary_label.setText(format_voltage(reading.primary))
+        self._mode_label.setText(reading.mode)
+        self._primary_label.setText(self._fmt(reading.primary))
 
-        self._min_label.setText(f"Min: {format_voltage(reading.v_min)}")
-        self._max_label.setText(f"Max: {format_voltage(reading.v_max)}")
-        self._avg_label.setText(f"Avg: {format_voltage(reading.v_avg)}")
+        self._min_label.setText(f"Min: {self._fmt(reading.v_min)}")
+        self._max_label.setText(f"Max: {self._fmt(reading.v_max)}")
+        self._avg_label.setText(f"Avg: {self._fmt(reading.v_avg)}")
+        self._count_label.setText(f"n={reading.sample_count}")
+
+        if reading.frequency is not None:
+            self._freq_label.setText(
+                f"Freq: {format_frequency(reading.frequency)}"
+            )
+        else:
+            self._freq_label.setText("Freq: ---")
+
+    def update_reading_relative(self, reading: DMMReading,
+                                ref_primary: float):
+        """Update display showing delta from reference value."""
+        self._mode_label.setText(reading.mode)
+        delta = reading.primary - ref_primary
+        self._primary_label.setText(f"Δ {self._fmt(delta)}")
+
+        self._min_label.setText(f"Δ Min: {self._fmt(reading.v_min - ref_primary)}")
+        self._max_label.setText(f"Δ Max: {self._fmt(reading.v_max - ref_primary)}")
+        self._avg_label.setText(f"Δ Avg: {self._fmt(reading.v_avg - ref_primary)}")
         self._count_label.setText(f"n={reading.sample_count}")
 
         if reading.frequency is not None:
@@ -134,12 +193,29 @@ class ChannelDMMCard(QFrame):
 
     def clear(self):
         """Clear all readings to placeholder dashes."""
-        self._primary_label.setText("--- V")
+        unit = "A" if self._is_current_mode else "V"
+        self._primary_label.setText(f"--- {unit}")
         self._min_label.setText("Min: ---")
         self._max_label.setText("Max: ---")
         self._avg_label.setText("Avg: ---")
         self._count_label.setText("n=0")
         self._freq_label.setText("Freq: ---")
+
+    def set_mode_label(self, mode: str):
+        """Update the mode label text (e.g. 'DC', 'AC', 'AC+DC')."""
+        self._mode_label.setText(mode)
+
+    def set_current_mode(self, active: bool):
+        """Toggle current measurement display (amps instead of volts)."""
+        self._is_current_mode = active
+
+    def set_hold_indicator(self, active: bool):
+        """Show/hide the HOLD badge."""
+        self._hold_badge.setVisible(active)
+
+    def set_rel_indicator(self, active: bool):
+        """Show/hide the Δ REL badge."""
+        self._rel_badge.setVisible(active)
 
     def set_color(self, color: str):
         """Update channel color (e.g. from settings dialog)."""
@@ -183,6 +259,8 @@ class DMMWidget(QWidget):
         self._cards: dict[int, ChannelDMMCard] = {}
         self._accumulators: dict[int, DMMAccumulator] = {}
         self._channel_visible: dict[int, bool] = {}
+        self._rel_active: bool = False
+        self._rel_refs: dict[int, float] = {}   # per-channel reference primary
 
         for ch in range(1, num_channels + 1):
             self._accumulators[ch] = DMMAccumulator()
@@ -252,6 +330,7 @@ class DMMWidget(QWidget):
                 acc.reset()
             for card in self._cards.values():
                 card.clear()
+                card.set_mode_label(mode)
             self.mode_changed.emit(mode)
 
     def _on_reset(self):
@@ -273,7 +352,7 @@ class DMMWidget(QWidget):
             channel: Channel number (1-indexed).
             voltage: Scope-space voltage array.
             time_axis: Time axis array.
-            probe_factor: Probe attenuation multiplier.
+            probe_factor: Probe attenuation multiplier (or probe/R for current mode).
         """
         acc = self._accumulators.get(channel)
         card = self._cards.get(channel)
@@ -281,7 +360,10 @@ class DMMWidget(QWidget):
             return
 
         reading = acc.update(voltage, time_axis, probe_factor, self._mode)
-        card.update_reading(reading)
+        if self._rel_active and channel in self._rel_refs:
+            card.update_reading_relative(reading, self._rel_refs[channel])
+        else:
+            card.update_reading(reading)
 
     def set_channel_visible(self, channel: int, visible: bool):
         """Show/hide a channel card (synced with channel enable/disable)."""
@@ -293,6 +375,28 @@ class DMMWidget(QWidget):
         """Update channel color from settings."""
         if channel in self._cards:
             self._cards[channel].set_color(color)
+
+    def set_channel_current_mode(self, channel: int, active: bool):
+        """Toggle current mode display for a channel card."""
+        if channel in self._cards:
+            self._cards[channel].set_current_mode(active)
+
+    def set_hold_indicator(self, active: bool):
+        """Show/hide HOLD badge on all visible cards."""
+        for card in self._cards.values():
+            card.set_hold_indicator(active)
+
+    def set_relative_mode(self, active: bool, refs: dict[int, float] = None):
+        """Toggle relative (Δ) display mode.
+
+        Args:
+            active: Whether REL mode is active.
+            refs: Per-channel reference primary values.
+        """
+        self._rel_active = active
+        self._rel_refs = refs or {}
+        for card in self._cards.values():
+            card.set_rel_indicator(active)
 
     def reset_all(self):
         """Reset all accumulators and clear display."""
