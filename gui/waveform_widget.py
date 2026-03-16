@@ -250,6 +250,11 @@ class WaveformWidget(pg.PlotWidget):
         self._trigger_crossing_label.setVisible(False)
         self.addItem(self._trigger_crossing_label)
 
+    def _trigger_display_level(self) -> float:
+        """Get trigger level in probe-tip units for badge display."""
+        probe = self._probe_factors.get(self._trigger_source_ch, 1.0)
+        return self._trigger_level * probe
+
     @staticmethod
     def _trigger_badge_html(level: float) -> str:
         """Generate HTML for the trigger level badge."""
@@ -468,12 +473,21 @@ class WaveformWidget(pg.PlotWidget):
         )
 
     def _cursor_display_to_physical(self, display_y: float) -> float:
-        """Convert a Y cursor display position to the cursor channel's units."""
+        """Convert a Y cursor display position to the cursor channel's units.
+
+        Reverses the display scaling to recover scope-space voltage,
+        then applies probe factor to get probe-tip voltage (or current).
+        """
         ch = self._cursor_channel
-        ch_vdiv = self._ch_effective_vdivs.get(ch, self._v_per_div)
-        if self._v_per_div <= 0:
+        scale = self._voltage_scale(ch)
+        if abs(scale) < 1e-15:
             return display_y
-        physical = display_y * ch_vdiv / self._v_per_div
+
+        # display_y = scope_voltage * scale  →  scope_voltage = display_y / scale
+        scope_v = display_y / scale
+        probe = self._probe_factors.get(ch, 1.0)
+        physical = scope_v * probe
+
         if self._current_mode.get(ch, False):
             shunt_r = self._shunt_resistance.get(ch, 1.0)
             if shunt_r > 0:

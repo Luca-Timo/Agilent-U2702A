@@ -2,7 +2,7 @@
 
 A macOS desktop application for the Agilent U2702A USB oscilloscope, built with PySide6 and PyQtGraph. Uses an ESP32-S3 as a USB bridge to bypass Apple Silicon USB driver limitations.
 
-## Current Version: 0.2.3-alpha
+## Current Version: 0.8.2-alpha
 
 ### Features
 - Real-time dual-channel waveform display with dark theme
@@ -12,14 +12,26 @@ A macOS desktop application for the Agilent U2702A USB oscilloscope, built with 
 - Horizontal T/div and position controls
 - Edge trigger with level, source, slope, sweep, and coupling
 - Software trigger alignment (trigger edge at center marker)
-- Live measurements: Vpp, Vmin, Vmax, Vrms, Vmean, Freq, Period
-- Measurement toggle buttons (select which measurements to display)
-- Per-channel GND/0V markers on Y-axis
-- Trigger level indicator (dashed line + right-edge badge)
-- Trigger position marker on X-axis
-- Connection dialog with auto-detection of CP2102N serial port
-- SCPI Tester tool (Tools menu, shared connection)
-- Settings dialog (channel colors, probe attenuation)
+- Live measurements: Vpp, Vmin, Vmax, Vrms, Vmean, Freq, Period, Rise, Fall, Duty
+- Measurement toggle buttons with per-channel readouts
+- Cursor system (time, voltage, or both) with drag-to-position and readout bar
+- Measurement click-to-cursor: click a measurement value to set cursors at key positions
+- Measurement hover highlights on waveform
+- Probe system: 1x / 10x / 100x / 1000x / Custom with probe badges on GND markers
+- Probe compensation guidance dialog
+- Digital multimeter mode (DC, AC RMS, AC+DC RMS) with large readout
+- Current measurement mode (I = V/R via shunt resistor)
+- DMM Hold, Relative (delta), and Range Lock
+- Session save/load (JSON), auto-save on exit, auto-restore on startup
+- Recent Sessions menu, QSettings persistence
+- Export waveform data to CSV or JSON (with metadata + measurements)
+- Export graph as PNG (dark/light) or PDF (A4 landscape)
+- Unified Export dialog with Data and Graph tabs
+- Drag-to-zoom with Cmd+Z undo
+- Per-channel GND markers, trigger level indicator, trigger position marker
+- Connection dialog with CP2102N auto-detection
+- SCPI Tester tool (shared connection)
+- Settings dialog (channel colors, probe attenuation, knob scroll toggle)
 
 ## Architecture
 
@@ -102,18 +114,23 @@ The connection dialog opens automatically. Select the CP2102N serial port and cl
 ```
 gui/
     main.py                 # Entry point
-    main_window.py          # Main oscilloscope window
-    waveform_widget.py      # PyQtGraph plot + markers
-    channel_panel.py        # Per-channel controls (Keysight-style columns)
+    main_window.py          # Main oscilloscope window, signal wiring
+    waveform_widget.py      # PyQtGraph plot, graticule, markers, cursors
+    channel_panel.py        # Per-channel Keysight-style columns
     timebase_panel.py       # Horizontal T/div + Position
     trigger_panel.py        # Trigger controls
-    measurement_bar.py      # Measurement buttons + readouts
+    measurement_bar.py      # Measurement toggle buttons + readouts
     acquisition_worker.py   # QThread SCPI streaming + trigger alignment
-    knob_widget.py          # Custom rotary knob widget
-    connection_dialog.py    # Serial port connection
-    settings_dialog.py      # Colors, probes
-    theme.py                # Dark theme, colors, formatting
-    scpi_tester.py          # SCPI command tester
+    knob_widget.py          # Custom rotary knob (drag + click popup)
+    connection_dialog.py    # Serial port connection dialog
+    settings_dialog.py      # Colors, probes, knob scroll
+    utility_panel.py        # Autoscale, measurements, cursor mode, DMM
+    cursor_readout.py       # Cursor readout panel (delta T, delta V)
+    export_dialog.py        # Unified export (CSV/JSON + PNG/PDF graph)
+    probe_comp_dialog.py    # Probe compensation guidance
+    theme.py                # Dark theme, SI formatting, channel colors
+    scpi_tester.py          # SCPI command tester tool
+    session.py              # Session save/load/restore
 
 instrument/
     serial_bridge.py        # Thread-safe serial bridge client
@@ -121,45 +138,46 @@ instrument/
 
 processing/
     waveform.py             # WaveformData, ADC conversion, trigger detection
-    measurements.py         # Vpp, Vrms, frequency, etc.
+    measurements.py         # Vpp, Vrms, frequency, rise/fall, duty cycle
+    autoscale.py            # Auto-range V/div, T/div, offset
+    export.py               # CSV and JSON export functions
 
 firmware/
     src/main.c              # ESP32-S3 firmware entry point
-    src/u2702a_boot.c       # HCD boot sequence
-    src/usb_host.c          # USB Host tasks
-    src/usbtmc.c            # USBTMC transport
+    src/u2702a_boot.c       # HCD boot sequence (PID 0x2818 → 0x2918)
+    src/usb_host.c          # USB Host daemon + client tasks
+    src/usbtmc.c            # USBTMC bulk transfer layer
     src/serial_bridge.c     # UART command dispatch
 ```
 
 ## Version History
 
-See [VERSIONING.md](VERSIONING.md) for the full roadmap.
+See [VERSIONING.md](VERSIONING.md) for the full roadmap and feature checklist.
 
 | Version | Status | Description |
 |---------|--------|-------------|
 | 0.1.x | Complete | Foundation: ESP32 bridge, SCPI tester, serial client |
-| 0.2.x | Current | Oscilloscope GUI: controls, waveforms, measurements |
-| 0.3.x | Planned | Advanced trigger system |
-| 0.4.x | Planned | Measurements and math |
-| 1.0.0 | Planned | Feature-complete release |
+| 0.2.x | Complete | Oscilloscope GUI: controls, waveforms, basic measurements |
+| 0.3.x | Complete | Trigger system: edge trigger, modes, drag-to-zoom |
+| 0.4.x | Complete | Measurements: rise/fall, duty cycle, cursors |
+| 0.5.x | Complete | Probe system: 1x-1000x, custom, compensation |
+| 0.6.x | Complete | Multimeter mode: DMM display, current measurement |
+| 0.7.x | Complete | Session files: save/load/restore, auto-save |
+| 0.8.x | Current | Export: CSV, JSON, PNG, PDF graph rendering |
+| 1.0.0 | Planned | Protocol decoders, light theme, .app bundle |
 
 ## Status & Roadmap
 
 > **This project is under active development.** Expect breaking changes between alpha versions.
 
-The current focus is building a fully functional oscilloscope GUI (0.2.x). Upcoming milestones:
+The current focus is data export and graph rendering (0.8.x). Upcoming milestones:
 
 | Milestone | Goal |
 |-----------|------|
-| **0.3.x** — Trigger System | Trigger modes (Auto/Normal/Single), pulse width trigger, trigger status |
-| **0.4.x** — Measurements & Math | Rise/fall time, duty cycle, cursor measurements, FFT |
-| **0.5.x** — Probe & Calibration | Per-probe config (1:1, 1:10, custom), compensation check |
-| **0.6.x** — Multimeter Mode | Large digital voltage/frequency display, min/max tracking |
-| **0.7.x** — Session Files | Save/load scope setups, auto-restore last session |
-| **0.8.x** — Export & Data | CSV/NumPy export, screenshots, waveform averaging, reference traces |
+| **0.8.x** — Export & Data | CSV/JSON export, PNG/PDF graph, waveform averaging, reference traces |
 | **1.0.0** — Release | Protocol decoders (UART, SPI, I2C), keyboard shortcuts, light theme, .app bundle |
 
-**Post-1.0 ideas:** XY mode, persistence display, network/LAN bridge, mask testing, plugin system for other oscilloscopes.
+**Post-1.0 ideas:** FFT/math functions, XY mode, persistence display, network/LAN bridge, mask testing, plugin system for other oscilloscopes.
 
 See [VERSIONING.md](VERSIONING.md) for the full feature checklist.
 

@@ -11,10 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QMarginsF
+from PySide6.QtCore import Qt, QMarginsF, QPoint
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QPen, QPageLayout, QPageSize,
-    QPdfWriter,
+    QPdfWriter, QPolygon,
 )
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QRadioButton,
@@ -22,7 +22,10 @@ from PySide6.QtWidgets import (
     QTabWidget, QWidget, QButtonGroup, QFrame,
 )
 
-from gui.theme import format_si, format_voltage, format_time, format_frequency
+from gui.theme import (
+    format_si, format_voltage, format_time, format_frequency, format_percent,
+    format_current, format_adiv,
+)
 from processing.waveform import WaveformData
 
 
@@ -329,6 +332,7 @@ def render_graph(
     cursors: dict,
     channel_settings: dict,
     settings: GraphExportSettings,
+    enabled_measurements: list[str] | None = None,
 ) -> QImage:
     """Render an oscilloscope graph to a QImage.
 
@@ -340,6 +344,8 @@ def render_graph(
         cursors: {"mode": str, "time": [t1, t2], "volt": [v1, v2], "channel": int}.
         channel_settings: Dict of channel → {"v_per_div", "offset", "probe_factor"}.
         settings: GraphExportSettings with rendering options.
+        enabled_measurements: List of enabled measurement display names
+            (e.g. ["Vpp", "Freq", "Rise"]). If None, all are shown.
 
     Returns:
         QImage with the rendered graph.
@@ -419,31 +425,22 @@ def render_graph(
     p.setPen(border_pen)
     p.drawRect(gx, gy, gw, gh)
 
-    # --- Scale labels ---
+    # --- Scale label: T/div below graph center ---
     if settings.show_scale_labels:
         label_font = QFont("Menlo", max(9, total_w // 160))
         p.setFont(label_font)
-        p.setPen(QColor(pal["text_dim"]))
+        fm = p.fontMetrics()
+        y_label = gy + gh + fm.height() + 4
 
         # T/div label (bottom center)
+        p.setPen(QColor(pal["text_dim"]))
         tdiv_str = format_si(t_per_div, "s/div")
-        fm = p.fontMetrics()
         tw = fm.horizontalAdvance(tdiv_str)
-        p.drawText(gx + gw // 2 - tw // 2, gy + gh + fm.height() + 4, tdiv_str)
+        p.drawText(gx + gw // 2 - tw // 2, y_label, tdiv_str)
 
-        # V/div labels per channel (left side, stacked)
-        y_label = gy + gh + fm.height() + 4
-        for idx, ch in enumerate(channels):
-            ch_settings = channel_settings.get(ch, {})
-            ch_vdiv = ch_settings.get("v_per_div", 1.0)
-            ch_probe = ch_settings.get("probe_factor", 1.0)
-            effective = ch_vdiv * ch_probe
-            vdiv_str = f"CH{ch}: {format_si(effective, 'V/div')}"
-            color = colors.get(ch, "#FFFFFF")
-            p.setPen(QColor(color))
-            p.drawText(gx + idx * (total_w // 4), y_label, vdiv_str)
-
-    # --- Waveform traces ---
+    # --- Waveform traces (clipped to graph area) ---
+    p.save()
+    p.setClipRect(gx, gy, gw, gh)
     for ch in channels:
         wf = waveforms[ch]
         color = colors.get(ch, "#FFFFFF")
@@ -451,12 +448,14 @@ def render_graph(
         p.setPen(trace_pen)
 
         # Scale voltage to display coordinates (like waveform_widget._voltage_scale)
+        # _voltage_scale = (display_vdiv / ch_effective) * ch_probe
+        # where ch_effective = ch_vdiv * ch_probe
         ch_settings = channel_settings.get(ch, {})
         ch_vdiv = ch_settings.get("v_per_div", 1.0)
         ch_probe = ch_settings.get("probe_factor", 1.0)
         ch_effective = ch_vdiv * ch_probe
         if ch_effective > 0:
-            scale = display_vdiv / ch_effective
+            scale = (display_vdiv / ch_effective) * ch_probe
         else:
             scale = 1.0
 
@@ -475,6 +474,31 @@ def render_graph(
             p.drawLine(int(prev_x), int(prev_y), int(curr_x), int(curr_y))
             prev_x = curr_x
             prev_y = curr_y
+    p.restore()  # Remove clip
+
+    # --- Trigger crossing point on waveform ---
+    if settings.show_trigger and trigger:
+        trig_source = trigger.get("source", "CHAN1")
+        if trig_source.startswith("CHAN"):
+            src_ch = int(trig_source[4:])
+            if src_ch in waveforms:
+                trig_level = trigger.get("level", 0.0)
+                # Scale trigger level to display space
+                ch_s = channel_settings.get(src_ch, {})
+                src_vdiv = ch_s.get("v_per_div", 1.0)
+                src_probe = ch_s.get("probe_factor", 1.0)
+                src_effective = src_vdiv * src_probe
+                trig_scale = (display_vdiv / src_effective) * src_probe if src_effective > 0 else 1.0
+                trig_display = trig_level * trig_scale
+                # Draw a filled circle at (time=0, trigger level)
+                dot_x = int(time_to_x(0.0))
+                dot_y = int(volt_to_y(trig_display))
+                dot_r = max(4, total_w // 300)
+                p.setBrush(QColor(pal["trigger"]))
+                p.setPen(QPen(QColor(pal["background"]), 1.5))
+                p.drawEllipse(dot_x - dot_r, dot_y - dot_r,
+                              2 * dot_r, 2 * dot_r)
+                p.setBrush(Qt.BrushStyle.NoBrush)
 
     # --- GND markers ---
     if settings.show_gnd_markers:
@@ -489,7 +513,7 @@ def render_graph(
             ch_probe = ch_settings.get("probe_factor", 1.0)
             ch_effective = ch_vdiv * ch_probe
             if ch_effective > 0:
-                scale = display_vdiv / ch_effective
+                scale = (display_vdiv / ch_effective) * ch_probe
             else:
                 scale = 1.0
 
@@ -505,7 +529,7 @@ def render_graph(
             p.drawText(gx - fm.horizontalAdvance(badge_text) - 6,
                        int(gnd_y) + fm.ascent() // 2, badge_text)
 
-    # --- Trigger level ---
+    # --- Trigger level + trigger position marker ---
     if settings.show_trigger and trigger:
         trig_level = trigger.get("level", 0.0)
         trig_source = trigger.get("source", "CHAN1")
@@ -518,7 +542,7 @@ def render_graph(
             src_effective = src_vdiv * src_probe
             src_offset = ch_s.get("offset", 0.0)
             if src_effective > 0:
-                trig_scale = display_vdiv / src_effective
+                trig_scale = (display_vdiv / src_effective) * src_probe
             else:
                 trig_scale = 1.0
             # The trigger level is in scope-space relative to the source channel
@@ -540,46 +564,135 @@ def render_graph(
         p.setPen(QColor(pal["trigger"]))
         p.drawText(gx + gw + 4, int(ty) + fm.ascent() // 2, trig_text)
 
+        # Trigger position ▼ marker on top edge at time=0
+        trig_x = int(time_to_x(0.0))
+        tri_size = max(6, total_w // 200)
+        p.setBrush(QColor(pal["trigger"]))
+        p.setPen(Qt.PenStyle.NoPen)
+        triangle = QPolygon([
+            QPoint(trig_x, gy),
+            QPoint(trig_x - tri_size, gy - tri_size - 2),
+            QPoint(trig_x + tri_size, gy - tri_size - 2),
+        ])
+        p.drawPolygon(triangle)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
     # --- Cursors ---
     if settings.show_cursors and cursors:
         cursor_mode = cursors.get("mode", "off")
         if cursor_mode != "off":
             cursor_pen = QPen(QColor(pal["cursor"]), 1.5, Qt.PenStyle.DashDotLine)
             cursor_font = QFont("Menlo", max(8, total_w // 180))
+            cursor_font.setBold(True)
             p.setFont(cursor_font)
             fm = p.fontMetrics()
 
             time_vals = cursors.get("time", [0.0, 0.0])
-            volt_vals = cursors.get("volt", [0.0, 0.0])
+            # Display-space values for positioning lines on graph
+            volt_display = cursors.get("volt_display",
+                                       cursors.get("volt", [0.0, 0.0]))
+            # Physical values for labels (probe-scaled, current-converted)
+            volt_physical = cursors.get("volt_physical", volt_display)
+            cursor_ch = cursors.get("channel", 1)
+            c_names = ["C1", "C2"]
 
+            # Determine if cursor channel is in current mode
+            ch_s = channel_settings.get(cursor_ch, {})
+            is_current = ch_s.get("current_mode", False)
+            fmt_v = format_current if is_current else format_voltage
+
+            # Time cursor lines with C1/C2 labels
             if cursor_mode in ("time", "both"):
-                p.setPen(cursor_pen)
                 for i, t_val in enumerate(time_vals):
                     cx = time_to_x(t_val)
-                    p.drawLine(int(cx), gy, int(cx), gy + gh)
-                    # Badge
-                    p.setPen(QColor(pal["cursor"]))
-                    label = format_time(t_val)
-                    p.drawText(int(cx) + 4, gy + 14 + i * (fm.height() + 2), label)
                     p.setPen(cursor_pen)
-
-            if cursor_mode in ("voltage", "both"):
-                p.setPen(cursor_pen)
-                for i, v_val in enumerate(volt_vals):
-                    cy = volt_to_y(v_val)
-                    p.drawLine(gx, int(cy), gx + gw, int(cy))
-                    # Badge
+                    p.drawLine(int(cx), gy, int(cx), gy + gh)
+                    # Label: "C1: -500 µs"
                     p.setPen(QColor(pal["cursor"]))
-                    label = format_voltage(v_val)
+                    label = f"{c_names[i]}: {format_time(t_val)}"
+                    p.drawText(int(cx) + 4, gy + 14 + i * (fm.height() + 2),
+                               label)
+
+            # Voltage cursor lines with C1/C2 labels (physical values)
+            if cursor_mode in ("voltage", "both"):
+                for i in range(2):
+                    cy = volt_to_y(volt_display[i])
+                    p.setPen(cursor_pen)
+                    p.drawLine(gx, int(cy), gx + gw, int(cy))
+                    # Label uses physical value
+                    p.setPen(QColor(pal["cursor"]))
+                    label = f"{c_names[i]}: {fmt_v(volt_physical[i])}"
                     p.drawText(gx + gw - fm.horizontalAdvance(label) - 4,
                                int(cy) - 4 - i * (fm.height() + 2), label)
-                    p.setPen(cursor_pen)
+
+            # --- Cursor readout bar (horizontal, like the GUI) ---
+            readout_font = QFont("Menlo", max(9, total_w // 160))
+            readout_font.setBold(True)
+            p.setFont(readout_font)
+            fm = p.fontMetrics()
+            bar_y = gy + gh - fm.height() - 8  # Bottom of graph
+            bar_x = gx + 10
+
+            bar_parts = []
+            if cursor_mode in ("time", "both"):
+                t1, t2 = time_vals
+                dt = abs(t2 - t1)
+                inv_dt = format_frequency(1.0 / dt) if dt > 1e-15 else "---"
+                bar_parts.append(("label", "C1:"))
+                bar_parts.append(("value", format_time(t1)))
+                bar_parts.append(("label", "C2:"))
+                bar_parts.append(("value", format_time(t2)))
+                bar_parts.append(("label", "ΔT:"))
+                bar_parts.append(("value", format_time(dt)))
+                bar_parts.append(("label", "1/ΔT:"))
+                bar_parts.append(("value", inv_dt))
+
+            if cursor_mode == "both":
+                bar_parts.append(("sep", "│"))
+
+            if cursor_mode in ("voltage", "both"):
+                ch_color = colors.get(cursor_ch, pal["cursor"])
+                bar_parts.append(("channel", f"CH{cursor_ch}"))
+                bar_parts.append(("label", "C1:"))
+                bar_parts.append(("value", fmt_v(volt_physical[0])))
+                bar_parts.append(("label", "C2:"))
+                bar_parts.append(("value", fmt_v(volt_physical[1])))
+                dv = abs(volt_physical[1] - volt_physical[0])
+                v_label = "ΔI:" if is_current else "ΔV:"
+                bar_parts.append(("label", v_label))
+                bar_parts.append(("value", fmt_v(dv)))
+
+            # Draw background bar
+            total_text_w = sum(
+                fm.horizontalAdvance(text) + (6 if kind != "sep" else 12)
+                for kind, text in bar_parts
+            )
+            bg_color = QColor(pal["background"])
+            bg_color.setAlpha(200)
+            p.fillRect(bar_x - 6, bar_y - 2,
+                       total_text_w + 12, fm.height() + 4, bg_color)
+
+            # Draw parts
+            cx_pos = bar_x
+            for kind, text in bar_parts:
+                if kind == "label":
+                    p.setPen(QColor(pal["cursor"]))
+                elif kind == "value":
+                    p.setPen(QColor(pal["text"]))
+                elif kind == "sep":
+                    p.setPen(QColor(pal["text_dim"]))
+                elif kind == "channel":
+                    p.setPen(QColor(ch_color))
+                p.drawText(cx_pos, bar_y + fm.ascent(), text)
+                cx_pos += fm.horizontalAdvance(text) + (
+                    12 if kind == "sep" else 6)
 
     # --- Measurement table below graph ---
     if has_meas:
         _render_measurement_table(p, measurements, colors, channels,
                                   gx, gy + gh + 30, gw, total_h - (gy + gh + 30),
-                                  pal)
+                                  pal, enabled_measurements,
+                                  channel_settings=channel_settings)
 
     p.end()
     return img
@@ -592,27 +705,98 @@ def _render_measurement_table(
     channels: list[int],
     x: int, y: int, w: int, h: int,
     pal: dict,
+    enabled_measurements: list[str] | None = None,
+    channel_settings: dict | None = None,
 ):
-    """Render measurement values in a table below the graph."""
-    _MEAS_COLS = [
+    """Render measurement values in a table below the graph.
+
+    The channel label column shows V/div (with probe) so that the scale
+    info lives alongside the measurement data instead of as a separate row.
+    Current-mode channels use A/A-div units instead of V/V-div.
+    """
+    _VOLTAGE_MEAS_COLS = [
         ("Vpp", "vpp", format_voltage),
         ("Vmin", "vmin", format_voltage),
         ("Vmax", "vmax", format_voltage),
         ("Vrms", "vrms", format_voltage),
+        ("Vmean", "vmean", format_voltage),
+    ]
+    _CURRENT_MEAS_COLS = [
+        ("Ipp", "vpp", format_current),
+        ("Imin", "vmin", format_current),
+        ("Imax", "vmax", format_current),
+        ("Irms", "vrms", format_current),
+        ("Imean", "vmean", format_current),
+    ]
+    _TIME_MEAS_COLS = [
         ("Freq", "frequency", format_frequency),
         ("Period", "period", format_time),
+        ("Rise", "rise_time", format_time),
+        ("Fall", "fall_time", format_time),
+        ("Duty", "duty_cycle", format_percent),
     ]
+    # Map display names: "Vpp" ↔ "Ipp" etc. for enabled filtering
+    _V_TO_I_NAME = {"Vpp": "Ipp", "Vmin": "Imin", "Vmax": "Imax",
+                    "Vrms": "Irms", "Vmean": "Imean"}
+
+    # Check if ANY channel is in current mode
+    any_current = False
+    if channel_settings:
+        any_current = any(
+            channel_settings.get(ch, {}).get("current_mode", False)
+            for ch in channels
+        )
+
+    # Build column list — use voltage or current header names
+    # For mixed mode (some V, some A), use voltage headers (majority case)
+    all_cols = (_CURRENT_MEAS_COLS if any_current else _VOLTAGE_MEAS_COLS) \
+        + _TIME_MEAS_COLS
+
+    # Filter to only enabled measurements (if specified)
+    if enabled_measurements is not None:
+        enabled_set = set(enabled_measurements)
+        # Also match I↔V equivalents
+        expanded = set(enabled_set)
+        for v_name, i_name in _V_TO_I_NAME.items():
+            if v_name in enabled_set:
+                expanded.add(i_name)
+            if i_name in enabled_set:
+                expanded.add(v_name)
+        meas_cols = [(d, k, f) for d, k, f in all_cols if d in expanded]
+    else:
+        meas_cols = all_cols
+
+    if not meas_cols:
+        return
 
     font = QFont("Menlo", max(9, w // 140))
     p.setFont(font)
     fm = p.fontMetrics()
     row_h = fm.height() + 6
-    col_w = w // (len(_MEAS_COLS) + 1)  # +1 for channel label column
+
+    # Calculate first column width to fit longest channel label
+    font_bold = QFont(font)
+    font_bold.setBold(True)
+    p.setFont(font_bold)
+    fm_bold = p.fontMetrics()
+    label_w = 0
+    for ch in channels:
+        ch_label = _make_ch_label(ch, channel_settings)
+        lw = fm_bold.horizontalAdvance(ch_label)
+        if lw > label_w:
+            label_w = lw
+    label_w += 16  # padding after label
+    p.setFont(font)
+    fm = p.fontMetrics()
+
+    # Remaining width shared equally by measurement columns
+    data_w = w - label_w
+    col_w = max(data_w // len(meas_cols), 60)
 
     # Header row
     p.setPen(QColor(pal["text_dim"]))
-    for ci, (label, _, _) in enumerate(_MEAS_COLS):
-        p.drawText(x + (ci + 1) * col_w, y + fm.ascent(), label)
+    for ci, (label, _, _) in enumerate(meas_cols):
+        p.drawText(x + label_w + ci * col_w, y + fm.ascent(), label)
 
     # Separator line
     sep_y = y + row_h - 2
@@ -624,24 +808,49 @@ def _render_measurement_table(
         meas = measurements.get(ch, {})
         row_y = y + (ri + 1) * row_h + fm.ascent()
         color = colors.get(ch, "#FFFFFF")
+        is_current = (channel_settings or {}).get(ch, {}).get(
+            "current_mode", False)
 
-        # Channel label
+        # Channel label with V/div or A/div
         p.setPen(QColor(color))
-        font_bold = QFont(font)
-        font_bold.setBold(True)
         p.setFont(font_bold)
-        p.drawText(x, row_y, f"CH{ch}")
+        ch_label = _make_ch_label(ch, channel_settings)
+        p.drawText(x, row_y, ch_label)
         p.setFont(font)
 
-        # Values
-        for ci, (_, key, fmt_func) in enumerate(_MEAS_COLS):
+        # Values — use format_current for voltage-type measurements when
+        # this channel is in current mode
+        for ci, (_, key, fmt_func) in enumerate(meas_cols):
             val = meas.get(key)
             if val is not None:
                 p.setPen(QColor(color))
-                p.drawText(x + (ci + 1) * col_w, row_y, fmt_func(val))
+                # Override format for voltage-type measurements in current mode
+                if is_current and fmt_func is format_voltage:
+                    p.drawText(x + label_w + ci * col_w, row_y,
+                               format_current(val))
+                elif not is_current and fmt_func is format_current:
+                    p.drawText(x + label_w + ci * col_w, row_y,
+                               format_voltage(val))
+                else:
+                    p.drawText(x + label_w + ci * col_w, row_y,
+                               fmt_func(val))
             else:
                 p.setPen(QColor(pal["text_dim"]))
-                p.drawText(x + (ci + 1) * col_w, row_y, "---")
+                p.drawText(x + label_w + ci * col_w, row_y, "---")
+
+
+def _make_ch_label(ch: int, channel_settings: dict | None) -> str:
+    """Build channel label string with V/div or A/div and probe tag."""
+    if not channel_settings:
+        return f"CH{ch}"
+    ch_s = channel_settings.get(ch, {})
+    ch_vdiv = ch_s.get("v_per_div", 1.0)
+    ch_probe = ch_s.get("probe_factor", 1.0)
+    is_current = ch_s.get("current_mode", False)
+    effective = ch_vdiv * ch_probe
+    probe_tag = f" ({ch_probe:g}x)" if ch_probe != 1.0 else ""
+    unit = "A/div" if is_current else "V/div"
+    return f"CH{ch}{probe_tag}  {format_si(effective, unit)}"
 
 
 def save_graph(img: QImage, settings: GraphExportSettings):

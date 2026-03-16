@@ -68,7 +68,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.8.0-alpha"
+APP_VERSION = "0.8.2-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -720,6 +720,7 @@ class MainWindow(QMainWindow):
 
     def _on_probe_changed(self, ch: int, factor: float):
         self.sig_set_probe.emit(ch, factor)
+        old_display_vdiv = self._waveform._v_per_div
         self._waveform.set_channel_probe(ch, factor)
         # Always update this channel's effective V/div for per-channel scaling
         vdiv = self._channel_panel.get_state(ch).v_per_div
@@ -730,9 +731,29 @@ class MainWindow(QMainWindow):
             self._waveform.set_scales(
                 effective, self._timebase_panel.t_per_div
             )
+            # Rescale volt cursor positions: traces moved by
+            # new_display_vdiv / old_display_vdiv, so cursors must follow.
+            new_display_vdiv = self._waveform._v_per_div
+            if (old_display_vdiv > 0 and new_display_vdiv != old_display_vdiv
+                    and self._waveform._cursor_mode in ("voltage", "both")):
+                ratio = new_display_vdiv / old_display_vdiv
+                for i in range(2):
+                    self._waveform._volt_cursors[i] *= ratio
+                    if self._waveform._volt_cursor_lines[i] is not None:
+                        self._waveform._volt_cursor_lines[i].setPos(
+                            self._waveform._volt_cursors[i])
+                self._waveform._update_cursor_positions()
+                self._volt_cursors = {
+                    1: self._waveform._volt_cursors[0],
+                    2: self._waveform._volt_cursors[1],
+                }
         # Refresh cursor readout (effective V/div changed)
         if self._waveform._cursor_mode in ("voltage", "both"):
             self._push_volt_cursor_readout()
+        # Recompute measurements with the new probe factor so the
+        # measurement bar updates immediately (without waiting for the
+        # next acquisition frame).
+        self._recompute_channel_measurements(ch)
 
     def _on_trigger_slope_changed(self, slope: str):
         self.sig_set_trigger_slope.emit(slope)
@@ -877,10 +898,13 @@ class MainWindow(QMainWindow):
         # If cursor channel matches, update readout unit and re-push values
         if ch == self._cursor_channel:
             self._sync_cursor_channel_mode()
+        # Recompute measurements with the new shunt resistance / mode
+        self._recompute_channel_measurements(ch)
 
     def _on_cursor_channel_selected(self, ch: int):
         """Handle channel selector click on cursor readout bar."""
         self._cursor_channel = ch
+        self._waveform._cursor_channel = ch
         self._sync_cursor_channel_mode()
 
     def _sync_cursor_channel_mode(self):
@@ -898,20 +922,21 @@ class MainWindow(QMainWindow):
     def _cursor_display_to_physical(self, display_y: float) -> float:
         """Convert a Y cursor display position to physical units.
 
-        Uses the cursor channel's effective V/div, probe factor, and
-        shunt resistance to convert from display-space to physical
-        volts (or amps if current mode).
+        Reverses the display scaling (_voltage_scale) to recover
+        scope-space voltage, then applies the authoritative probe
+        factor from the channel panel to get probe-tip voltage
+        (or current if in current mode).
         """
         ch = self._cursor_channel
-        display_vdiv = self._waveform._v_per_div
-        effective_vdiv = self._waveform._ch_effective_vdivs.get(ch, display_vdiv)
-
-        if display_vdiv <= 0:
+        scale = self._waveform._voltage_scale(ch)
+        if abs(scale) < 1e-15:
             return display_y
 
-        physical = display_y * effective_vdiv / display_vdiv
-
+        # display_y = scope_voltage * scale  →  scope_voltage = display_y / scale
+        scope_v = display_y / scale
         ch_state = self._channel_panel.get_state(ch)
+        physical = scope_v * ch_state.probe_factor
+
         if ch_state.current_mode and ch_state.shunt_resistance > 0:
             physical /= ch_state.shunt_resistance
 
@@ -1270,8 +1295,9 @@ class MainWindow(QMainWindow):
 
         # Compute and display measurements.
         # Voltage data is in scope-space (no probe factor), so we scale
-        # by probe_factor to get probe-tip voltage for measurements.
-        probe = waveform.probe_factor
+        # by the panel's authoritative probe_factor to get probe-tip voltage.
+        # (The worker's waveform.probe_factor may be stale after session restore.)
+        probe = ch_state.probe_factor
         if probe != 1.0:
             meas_voltage = waveform.voltage * probe
         else:
@@ -1282,6 +1308,26 @@ class MainWindow(QMainWindow):
             meas_voltage = meas_voltage / ch_state.shunt_resistance
 
         meas = measurements.compute_all(meas_voltage, waveform.time_axis)
+        self._measurement_bar.update_measurements(ch, meas)
+
+    def _recompute_channel_measurements(self, ch: int):
+        """Recompute measurements for a channel using cached waveform data.
+
+        Called when probe factor or current mode changes so measurements
+        update immediately without waiting for the next acquisition frame.
+        """
+        wf = self._last_waveforms.get(ch)
+        if wf is None:
+            return
+        ch_state = self._channel_panel.get_state(ch)
+        probe = ch_state.probe_factor
+        if probe != 1.0:
+            meas_voltage = wf.voltage * probe
+        else:
+            meas_voltage = wf.voltage
+        if ch_state.current_mode and ch_state.shunt_resistance > 0:
+            meas_voltage = meas_voltage / ch_state.shunt_resistance
+        meas = measurements.compute_all(meas_voltage, wf.time_axis)
         self._measurement_bar.update_measurements(ch, meas)
 
     @Slot(dict)
@@ -1312,6 +1358,8 @@ class MainWindow(QMainWindow):
             v = ch_state.get("v_per_div", 1.0)
             probe = self._channel_panel.get_state(ch).probe_factor
             self._waveform.set_channel_vdiv(ch, v * probe)
+            # Sync worker so WaveformData.probe_factor is correct
+            self.sig_set_probe.emit(ch, probe)
 
         # Apply timebase
         tb = state.get("timebase", {})
@@ -1475,11 +1523,14 @@ class MainWindow(QMainWindow):
             probes = dialog.get_probe_factors()
             for ch, factor in probes.items():
                 self.sig_set_probe.emit(ch, factor)
+                self._channel_panel._states[ch].probe_factor = factor
                 self._channel_panel._columns[ch].set_probe(factor)
                 self._waveform.set_channel_probe(ch, factor)
                 # Update per-channel effective V/div
                 vdiv = self._channel_panel.get_state(ch).v_per_div
                 self._waveform.set_channel_vdiv(ch, vdiv * factor)
+                # Recompute measurements with updated probe factor
+                self._recompute_channel_measurements(ch)
             # Refresh Y-axis with updated effective V/div
             active = self._channel_panel._active_channel
             self._waveform.set_scales(
@@ -1723,16 +1774,24 @@ class MainWindow(QMainWindow):
                 "v_per_div": st.v_per_div,
                 "offset": st.offset,
                 "probe_factor": st.probe_factor,
+                "current_mode": st.current_mode,
+                "shunt_resistance": st.shunt_resistance,
             }
         trigger = {
             "level": self._trigger_panel.level,
             "source": self._trigger_panel.source,
             "slope": self._trigger_panel.slope,
         }
+        # Convert cursor volt values to physical units for export labels
+        # (display-space values are also passed for positioning on graph)
+        raw_volt = list(self._waveform._volt_cursors)
+        phys_v1 = self._cursor_display_to_physical(raw_volt[0])
+        phys_v2 = self._cursor_display_to_physical(raw_volt[1])
         cursors = {
             "mode": self._waveform._cursor_mode,
             "time": list(self._waveform._time_cursors),
-            "volt": list(self._waveform._volt_cursors),
+            "volt_display": raw_volt,       # display-space (for volt_to_y)
+            "volt_physical": [phys_v1, phys_v2],  # physical (for labels)
             "channel": self._cursor_channel,
         }
         return {
@@ -1742,6 +1801,7 @@ class MainWindow(QMainWindow):
             "channel_settings": channel_settings,
             "trigger": trigger,
             "cursors": cursors,
+            "enabled_measurements": self._measurement_bar.enabled_measurements,
         }
 
     def _on_export(self):
@@ -1790,6 +1850,7 @@ class MainWindow(QMainWindow):
                 cursors=ctx["cursors"],
                 channel_settings=ctx["channel_settings"],
                 settings=gs,
+                enabled_measurements=ctx["enabled_measurements"],
             )
             save_graph(img, gs)
             self.statusBar().showMessage(

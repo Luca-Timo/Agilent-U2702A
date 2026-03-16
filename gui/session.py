@@ -11,7 +11,7 @@ Functions:
 import json
 from pathlib import Path
 
-SESSION_VERSION = "0.8.0"
+SESSION_VERSION = "0.8.1"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
@@ -184,6 +184,8 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
         vdiv = ch_data.get("v_per_div", 1.0)
         win._waveform.set_channel_probe(ch, probe)
         win._waveform.set_channel_vdiv(ch, vdiv * probe)
+        # Sync worker so incoming WaveformData.probe_factor is correct
+        win.sig_set_probe.emit(ch, probe)
 
         current_mode = ch_data.get("current_mode", False)
         shunt = ch_data.get("shunt_resistance", 1.0)
