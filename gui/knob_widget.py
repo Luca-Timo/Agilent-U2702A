@@ -80,7 +80,7 @@ class RotaryKnob(QWidget):
     ARC_SPAN = -270          # degrees (clockwise)
 
     # Class-level setting: when False, scroll wheel on knobs is ignored
-    _scroll_enabled: bool = True
+    _scroll_enabled: bool = False
 
     @classmethod
     def set_scroll_enabled(cls, enabled: bool):

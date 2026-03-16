@@ -11,7 +11,7 @@ Functions:
 import json
 from pathlib import Path
 
-SESSION_VERSION = "0.8.1"
+SESSION_VERSION = "0.8.2"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
@@ -53,7 +53,7 @@ def default_state() -> dict:
             "dmm_hold": False,
             "dmm_relative": False,
             "dmm_range_locked": False,
-            "knob_scroll": True,
+            "knob_scroll": False,
         },
         "window": {"geometry": [100, 100, 1440, 900]},
     }

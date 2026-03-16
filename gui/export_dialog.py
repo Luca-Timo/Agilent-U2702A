@@ -119,18 +119,22 @@ class ExportDialog(QDialog):
         self._data_fmt_group = QButtonGroup(self)
         self._data_csv_radio = QRadioButton("CSV")
         self._data_json_radio = QRadioButton("JSON")
+        self._data_npz_radio = QRadioButton("NPZ")
         self._data_csv_radio.setChecked(True)
         self._data_fmt_group.addButton(self._data_csv_radio)
         self._data_fmt_group.addButton(self._data_json_radio)
+        self._data_fmt_group.addButton(self._data_npz_radio)
         fmt_layout.addWidget(self._data_csv_radio)
         fmt_layout.addWidget(self._data_json_radio)
+        fmt_layout.addWidget(self._data_npz_radio)
         fmt_layout.addStretch()
         layout.addWidget(fmt_group)
 
         # Info label
         info = QLabel(
             "Exports time + voltage data for all enabled channels.\n"
-            "Includes metadata header with scope settings and measurements."
+            "CSV/JSON: probe-adjusted voltage with metadata.\n"
+            "NPZ: raw scope-space voltage (NumPy, lossless)."
         )
         info.setStyleSheet("color: #888888; font-size: 11px;")
         info.setWordWrap(True)
@@ -251,16 +255,21 @@ class ExportDialog(QDialog):
     # ----- Handlers -----
 
     def _on_data_export(self):
-        fmt = "csv" if self._data_csv_radio.isChecked() else "json"
-        ext = "csv" if fmt == "csv" else "json"
+        if self._data_npz_radio.isChecked():
+            fmt, ext = "npz", "npz"
+        elif self._data_json_radio.isChecked():
+            fmt, ext = "json", "json"
+        else:
+            fmt, ext = "csv", "csv"
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"waveform_{ts}.{ext}"
-        filter_str = (
-            "CSV Files (*.csv)" if fmt == "csv"
-            else "JSON Files (*.json)"
-        )
+        filter_map = {
+            "csv": "CSV Files (*.csv)",
+            "json": "JSON Files (*.json)",
+            "npz": "NumPy Archives (*.npz)",
+        }
         path, _ = QFileDialog.getSaveFileName(
-            self, f"Export {fmt.upper()}", default_name, filter_str
+            self, f"Export {fmt.upper()}", default_name, filter_map[fmt]
         )
         if not path:
             return
@@ -594,26 +603,27 @@ def render_graph(
             # Physical values for labels (probe-scaled, current-converted)
             volt_physical = cursors.get("volt_physical", volt_display)
             cursor_ch = cursors.get("channel", 1)
-            c_names = ["C1", "C2"]
+            t_names = ["C-X1", "C-X2"]   # time cursors
+            v_names = ["C-Y1", "C-Y2"]   # voltage cursors
 
             # Determine if cursor channel is in current mode
             ch_s = channel_settings.get(cursor_ch, {})
             is_current = ch_s.get("current_mode", False)
             fmt_v = format_current if is_current else format_voltage
 
-            # Time cursor lines with C1/C2 labels
+            # Time cursor lines with T1/T2 labels
             if cursor_mode in ("time", "both"):
                 for i, t_val in enumerate(time_vals):
                     cx = time_to_x(t_val)
                     p.setPen(cursor_pen)
                     p.drawLine(int(cx), gy, int(cx), gy + gh)
-                    # Label: "C1: -500 µs"
+                    # Label: "T1: -500 µs"
                     p.setPen(QColor(pal["cursor"]))
-                    label = f"{c_names[i]}: {format_time(t_val)}"
+                    label = f"{t_names[i]}: {format_time(t_val)}"
                     p.drawText(int(cx) + 4, gy + 14 + i * (fm.height() + 2),
                                label)
 
-            # Voltage cursor lines with C1/C2 labels (physical values)
+            # Voltage cursor lines with V1/V2 labels (physical values)
             if cursor_mode in ("voltage", "both"):
                 for i in range(2):
                     cy = volt_to_y(volt_display[i])
@@ -621,7 +631,7 @@ def render_graph(
                     p.drawLine(gx, int(cy), gx + gw, int(cy))
                     # Label uses physical value
                     p.setPen(QColor(pal["cursor"]))
-                    label = f"{c_names[i]}: {fmt_v(volt_physical[i])}"
+                    label = f"{v_names[i]}: {fmt_v(volt_physical[i])}"
                     p.drawText(gx + gw - fm.horizontalAdvance(label) - 4,
                                int(cy) - 4 - i * (fm.height() + 2), label)
 
@@ -638,9 +648,9 @@ def render_graph(
                 t1, t2 = time_vals
                 dt = abs(t2 - t1)
                 inv_dt = format_frequency(1.0 / dt) if dt > 1e-15 else "---"
-                bar_parts.append(("label", "C1:"))
+                bar_parts.append(("label", "C-X1:"))
                 bar_parts.append(("value", format_time(t1)))
-                bar_parts.append(("label", "C2:"))
+                bar_parts.append(("label", "C-X2:"))
                 bar_parts.append(("value", format_time(t2)))
                 bar_parts.append(("label", "ΔT:"))
                 bar_parts.append(("value", format_time(dt)))
@@ -653,9 +663,9 @@ def render_graph(
             if cursor_mode in ("voltage", "both"):
                 ch_color = colors.get(cursor_ch, pal["cursor"])
                 bar_parts.append(("channel", f"CH{cursor_ch}"))
-                bar_parts.append(("label", "C1:"))
+                bar_parts.append(("label", "C-Y1:"))
                 bar_parts.append(("value", fmt_v(volt_physical[0])))
-                bar_parts.append(("label", "C2:"))
+                bar_parts.append(("label", "C-Y2:"))
                 bar_parts.append(("value", fmt_v(volt_physical[1])))
                 dv = abs(volt_physical[1] - volt_physical[0])
                 v_label = "ΔI:" if is_current else "ΔV:"

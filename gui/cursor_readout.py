@@ -19,8 +19,8 @@ class CursorReadout(QFrame):
     """Cursor measurement readout — shows cursor positions and deltas.
 
     Layout (single row, compact):
-        Time mode:    C1: -500 µs   C2: +500 µs   ΔT: 1.00 ms   1/ΔT: 1.00 kHz
-        Voltage mode: [CH1] C1: 1.20 V  C2: -800 mV  ΔV: 2.00 V
+        Time mode:    C-X1: -500 µs   C-X2: +500 µs   ΔT: 1.00 ms   1/ΔT: 1.00 kHz
+        Voltage mode: [CH1] C-Y1: 1.20 V  C-Y2: -800 mV  ΔV: 2.00 V
         Both mode:    Both rows combined into one line
 
     The channel selector determines which channel the Y cursors
@@ -58,13 +58,13 @@ class CursorReadout(QFrame):
         )
 
         # Time cursor labels
-        self._tc1_label = QLabel("C1:")
+        self._tc1_label = QLabel("C-X1:")
         self._tc1_label.setStyleSheet(label_style)
         self._tc1_value = QLabel("---")
         self._tc1_value.setStyleSheet(value_style)
         self._tc1_value.setMinimumWidth(80)
 
-        self._tc2_label = QLabel("C2:")
+        self._tc2_label = QLabel("C-X2:")
         self._tc2_label.setStyleSheet(label_style)
         self._tc2_value = QLabel("---")
         self._tc2_value.setStyleSheet(value_style)
@@ -90,13 +90,13 @@ class CursorReadout(QFrame):
         self._ch_btn.clicked.connect(self._on_ch_clicked)
 
         # Voltage/current cursor labels
-        self._vc1_label = QLabel("C1:")
+        self._vc1_label = QLabel("C-Y1:")
         self._vc1_label.setStyleSheet(label_style)
         self._vc1_value = QLabel("---")
         self._vc1_value.setStyleSheet(value_style)
         self._vc1_value.setMinimumWidth(80)
 
-        self._vc2_label = QLabel("C2:")
+        self._vc2_label = QLabel("C-Y2:")
         self._vc2_label.setStyleSheet(label_style)
         self._vc2_value = QLabel("---")
         self._vc2_value.setStyleSheet(value_style)

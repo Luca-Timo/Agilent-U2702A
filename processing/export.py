@@ -1,15 +1,18 @@
 """
-Waveform data export — CSV and JSON formats with metadata.
+Waveform data export — CSV, JSON, and NPZ formats with metadata.
 
 Functions:
     export_csv(waveforms, measurements, path)   Write waveform data to CSV
     export_json(waveforms, measurements, path)  Write waveform data to JSON
+    export_npz(waveforms, measurements, path)   Write waveform data to NPZ
 """
 
 import csv
 import json
 from datetime import datetime
 from pathlib import Path
+
+import numpy as np
 
 from gui.theme import format_si
 from processing.waveform import WaveformData
@@ -173,3 +176,60 @@ def export_json(
 
     with open(p, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def export_npz(
+    waveforms: dict[int, WaveformData],
+    measurements: dict[int, dict],
+    path: str,
+):
+    """Export waveform data to a compressed NumPy archive (.npz).
+
+    Stores raw scope-space voltage (no probe applied) for lossless round-trip
+    and downstream signal analysis.
+
+    Args:
+        waveforms: Dict of channel -> WaveformData (only enabled channels).
+        measurements: Dict of channel -> measurement results dict.
+        path: Output file path.
+    """
+    if not waveforms:
+        return
+
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    channels = sorted(waveforms.keys())
+    ref_ch = channels[0]
+
+    # Build metadata JSON
+    meta_channels = {}
+    for ch in channels:
+        wf = waveforms[ch]
+        meta_channels[str(ch)] = {
+            "v_per_div": wf.v_per_div,
+            "offset": wf.offset,
+            "t_per_div": wf.t_per_div,
+            "probe_factor": wf.probe_factor,
+            "trigger_sample": wf.trigger_sample,
+            "measurements": measurements.get(ch, {}),
+        }
+
+    metadata = {
+        "instrument": "Agilent U2702A",
+        "date": datetime.now().isoformat(),
+        "channels": list(channels),
+        "channel_settings": meta_channels,
+    }
+
+    # Build arrays dict for np.savez_compressed
+    arrays: dict[str, np.ndarray] = {
+        "time_axis": waveforms[ref_ch].time_axis,
+        "metadata": np.array(json.dumps(metadata)),  # scalar string array
+    }
+    for ch in channels:
+        wf = waveforms[ch]
+        arrays[f"ch{ch}_voltage"] = wf.voltage          # raw scope-space
+        arrays[f"ch{ch}_raw_adc"] = wf.raw_adc
+
+    np.savez_compressed(p, **arrays)

@@ -177,7 +177,10 @@
 - [x] Unified Export dialog (Data tab: CSV/JSON, Graph tab: PNG/PDF)
 - [x] Configurable graph export (measurements, cursors, trigger, V/div & T/div labels, GND markers)
 - [x] Quick Export CSV shortcut (Ctrl+Shift+E)
-- [ ] Waveform export to NumPy (.npy)
+- [x] Waveform export to NumPy (.npz) with raw scope-space voltage
+- [x] Import waveform data (CSV/JSON/NPZ) for display
+- [x] Cursor labels: C-X1/C-X2 (time) and C-Y1/C-Y2 (voltage)
+- [x] Knob scroll disabled by default
 - [ ] FFT math function display
 - [ ] Waveform averaging
 - [ ] Reference waveform storage/recall

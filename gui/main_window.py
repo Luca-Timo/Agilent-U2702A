@@ -307,6 +307,11 @@ class MainWindow(QMainWindow):
         export_csv_action.triggered.connect(self._on_quick_export_csv)
         file_menu.addAction(export_csv_action)
 
+        import_action = QAction("Import…", self)
+        import_action.setShortcut("Ctrl+I")
+        import_action.triggered.connect(self._on_import)
+        file_menu.addAction(import_action)
+
         file_menu.addSeparator()
 
         quit_action = QAction("Quit", self)
@@ -1809,7 +1814,7 @@ class MainWindow(QMainWindow):
         from gui.export_dialog import (
             ExportDialog, render_graph, save_graph,
         )
-        from processing.export import export_csv, export_json
+        from processing.export import export_csv, export_json, export_npz
 
         if not self._last_waveforms:
             self.statusBar().showMessage("No waveform data to export", 3000)
@@ -1827,11 +1832,13 @@ class MainWindow(QMainWindow):
 
         from pathlib import Path
 
-        # Data export (CSV / JSON)
+        # Data export (CSV / JSON / NPZ)
         ds = dlg.data_settings
         if ds is not None:
             if ds.format == "csv":
                 export_csv(ctx["waveforms"], ctx["measurements"], ds.path)
+            elif ds.format == "npz":
+                export_npz(ctx["waveforms"], ctx["measurements"], ds.path)
             else:
                 export_json(ctx["waveforms"], ctx["measurements"], ds.path)
             self.statusBar().showMessage(
@@ -1880,6 +1887,108 @@ class MainWindow(QMainWindow):
         from pathlib import Path
         self.statusBar().showMessage(
             f"Exported: {Path(path).name}", 3000
+        )
+
+    def _on_import(self):
+        """Import waveform data from CSV, JSON, or NPZ file."""
+        from pathlib import Path
+        from processing.import_data import import_file
+        from processing.waveform import WaveformData
+        from processing import measurements
+        import numpy as np
+        import time
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Waveform Data", "",
+            "All Supported (*.csv *.json *.npz);;"
+            "CSV Files (*.csv);;JSON Files (*.json);;NumPy Archives (*.npz)"
+        )
+        if not path:
+            return
+
+        try:
+            parsed = import_file(path)
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Import Error", str(e))
+            return
+
+        time_axis = parsed["time_axis"]
+        ch_data = parsed["channels"]
+
+        if not ch_data:
+            self.statusBar().showMessage("No channel data found in file", 3000)
+            return
+
+        # Stop acquisition if running
+        if self._worker and self._worker._running:
+            self._worker.stop()
+
+        # Inject imported data into GUI
+        from gui.theme import NUM_CHANNELS
+        for ch in range(1, NUM_CHANNELS + 1):
+            if ch not in ch_data:
+                continue
+
+            cd = ch_data[ch]
+            voltage = cd["voltage"]
+            raw_adc = cd.get("raw_adc")
+            if raw_adc is None:
+                raw_adc = np.zeros(len(voltage), dtype=np.uint8)
+
+            wf = WaveformData(
+                channel=ch,
+                raw_adc=raw_adc,
+                voltage=voltage,
+                time_axis=time_axis[:len(voltage)],
+                v_per_div=cd["v_per_div"],
+                offset=cd["offset"],
+                t_per_div=cd["t_per_div"],
+                probe_factor=cd["probe_factor"],
+                timestamp=time.monotonic(),
+                trigger_sample=cd.get("trigger_sample"),
+            )
+
+            # Cache and display
+            self._last_waveforms[ch] = wf
+
+            # Update channel panel settings
+            self._channel_panel.set_channel_state(
+                ch,
+                enabled=True,
+                v_per_div=cd["v_per_div"],
+                offset=cd["offset"],
+                probe_factor=cd["probe_factor"],
+            )
+
+            # Enable channel on waveform widget (set_channel_state doesn't
+            # emit channel_enabled signal, so we must sync manually)
+            self._waveform.set_channel_enabled(ch, True)
+
+            # Display waveform
+            self._waveform.update_waveform(wf)
+
+            # Compute measurements
+            probe = cd["probe_factor"]
+            meas_voltage = voltage * probe if probe != 1.0 else voltage
+            meas = measurements.compute_all(meas_voltage, wf.time_axis)
+            self._measurement_bar.update_measurements(ch, meas)
+
+        # Disable channels not in the import
+        for ch in range(1, NUM_CHANNELS + 1):
+            if ch not in ch_data:
+                self._channel_panel.set_channel_state(ch, enabled=False)
+                self._waveform.set_channel_enabled(ch, False)
+
+        # Update timebase from first channel
+        first_ch = min(ch_data.keys())
+        t_per_div = ch_data[first_ch]["t_per_div"]
+        self._timebase_panel.set_tdiv(t_per_div)
+
+        self.statusBar().showMessage(
+            f"Imported: {Path(path).name} "
+            f"({len(ch_data)} channel{'s' if len(ch_data) > 1 else ''})",
+            5000,
         )
 
     def _save_session_to(self, path: str):
