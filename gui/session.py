@@ -11,7 +11,7 @@ Functions:
 import json
 from pathlib import Path
 
-SESSION_VERSION = "0.8.2"
+SESSION_VERSION = "0.8.3"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
@@ -54,6 +54,14 @@ def default_state() -> dict:
             "dmm_relative": False,
             "dmm_range_locked": False,
             "knob_scroll": False,
+            "averaging_count": 0,
+            "split_view": False,
+            "fft_enabled": False,
+            "fft_source": 1,
+            "fft_scale": "dbv",
+            "fft_window": "hann",
+            "math_enabled": False,
+            "math_op": "add",
         },
         "window": {"geometry": [100, 100, 1440, 900]},
     }
@@ -84,6 +92,7 @@ def gather_state(win) -> dict:
             "current_mode": st.current_mode,
             "shunt_resistance": st.shunt_resistance,
             "color": win._channel_colors.get(ch, ""),
+            "inverted": win._channel_inverted.get(ch, False),
         }
 
     # --- Timebase ---
@@ -119,6 +128,14 @@ def gather_state(win) -> dict:
         "dmm_relative": win._rel_active,
         "dmm_range_locked": win._range_locked,
         "knob_scroll": RotaryKnob._scroll_enabled,
+        "averaging_count": win._utility_panel.averaging_count,
+        "split_view": win._container.mode == "split",
+        "fft_enabled": win._fft_enabled,
+        "fft_source": win._fft_source,
+        "fft_scale": win._fft_scale,
+        "fft_window": win._fft_window,
+        "math_enabled": win._math_enabled,
+        "math_op": win._math_op,
     }
 
     # --- Window geometry ---
@@ -199,6 +216,13 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
             win._channel_colors[ch] = color
             win._waveform.set_channel_color(ch, color)
             win._dmm_widget.set_channel_color(ch, color)
+
+        # Channel invert
+        inverted = ch_data.get("inverted", False)
+        if inverted:
+            win._channel_inverted[ch] = True
+            win._channel_panel.set_channel_state(ch, inverted=True)
+            win._waveform.set_channel_inverted(ch, True)
 
     # --- Timebase ---
     tb = state.get("timebase", {})
@@ -297,6 +321,36 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
 
     knob_scroll = disp.get("knob_scroll", True)
     RotaryKnob.set_scroll_enabled(knob_scroll)
+
+    avg_count = disp.get("averaging_count", 0)
+    win._utility_panel.set_averaging(avg_count)
+    win._averager.set_count(avg_count)
+
+    split_view = disp.get("split_view", False)
+    win._container.set_layout_mode("split" if split_view else "combined")
+    win._split_action.setChecked(split_view)
+
+    # FFT state
+    fft_window = disp.get("fft_window", "hann")
+    win._fft_panel.set_window(fft_window)
+    win._fft_window = fft_window
+    fft_scale = disp.get("fft_scale", "dbv")
+    win._fft_panel.set_scale(fft_scale)
+    win._fft_scale = fft_scale
+    fft_source = disp.get("fft_source", 1)
+    win._fft_panel.set_source(fft_source)
+    win._fft_source = fft_source
+    fft_enabled = disp.get("fft_enabled", False)
+    win._fft_panel.set_enabled(fft_enabled)
+    win._fft_enabled = fft_enabled
+
+    # Math state
+    math_op = disp.get("math_op", "add")
+    win._math_panel.set_operation(math_op)
+    win._math_op = math_op
+    math_enabled = disp.get("math_enabled", False)
+    win._math_panel.set_enabled(math_enabled)
+    win._math_enabled = math_enabled
 
     # --- Update waveform display axis scaling ---
     active_ch = win._channel_panel._active_channel

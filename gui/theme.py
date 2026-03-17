@@ -38,6 +38,8 @@ ACCENT_BLUE = "#4a9eff"
 STATUS_GREEN = "#50c878"
 STATUS_YELLOW = "#ffcc00"
 STATUS_RED = "#ff5555"
+MATH_COLOR = "#ff66ff"     # Magenta — math channel trace color
+MATH_CH = 99               # Virtual channel number for math operations
 
 # --- 1-2-5 value sequences ---
 
@@ -139,6 +141,8 @@ def format_percent(value: float) -> str:
 
 def channel_color(ch: int) -> str:
     """Get default color for channel number (1-indexed)."""
+    if ch == MATH_CH:
+        return MATH_COLOR
     idx = (ch - 1) % len(DEFAULT_CHANNEL_COLORS)
     return DEFAULT_CHANNEL_COLORS[idx]
 

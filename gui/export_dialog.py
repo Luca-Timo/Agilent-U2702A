@@ -48,6 +48,7 @@ class GraphExportSettings:
     show_trigger: bool
     show_scale_labels: bool
     show_gnd_markers: bool
+    split_view: bool
     width: int
     height: int
     path: str
@@ -86,7 +87,7 @@ class ExportDialog(QDialog):
     """Unified export dialog with Data and Graph tabs."""
 
     def __init__(self, has_data: bool = True, cursor_mode: str = "off",
-                 parent=None):
+                 split_view: bool = False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Export")
         self.setMinimumWidth(420)
@@ -94,6 +95,7 @@ class ExportDialog(QDialog):
 
         self._has_data = has_data
         self._cursor_mode = cursor_mode
+        self._split_view = split_view
         self._result_data: DataExportSettings | None = None
         self._result_graph: GraphExportSettings | None = None
 
@@ -202,10 +204,12 @@ class ExportDialog(QDialog):
         self._cb_trigger = QCheckBox("Trigger level")
         self._cb_scale_labels = QCheckBox("V/div && T/div labels")
         self._cb_gnd_markers = QCheckBox("GND markers")
+        self._cb_split_view = QCheckBox("Split channels (separate graphs)")
         for cb in [self._cb_measurements, self._cb_cursors, self._cb_trigger,
-                    self._cb_scale_labels, self._cb_gnd_markers]:
+                    self._cb_scale_labels, self._cb_gnd_markers, self._cb_split_view]:
             cb.setChecked(True)
             include_layout.addWidget(cb)
+        self._cb_split_view.setChecked(self._split_view)
         # Disable cursors checkbox if no cursors active
         if self._cursor_mode == "off":
             self._cb_cursors.setChecked(False)
@@ -301,6 +305,7 @@ class ExportDialog(QDialog):
             show_trigger=self._cb_trigger.isChecked(),
             show_scale_labels=self._cb_scale_labels.isChecked(),
             show_gnd_markers=self._cb_gnd_markers.isChecked(),
+            split_view=self._cb_split_view.isChecked(),
             width=w,
             height=h,
             path=path,
@@ -448,42 +453,104 @@ def render_graph(
         p.drawText(gx + gw // 2 - tw // 2, y_label, tdiv_str)
 
     # --- Waveform traces (clipped to graph area) ---
-    p.save()
-    p.setClipRect(gx, gy, gw, gh)
-    for ch in channels:
-        wf = waveforms[ch]
-        color = colors.get(ch, "#FFFFFF")
-        trace_pen = QPen(QColor(color), 1.5)
-        p.setPen(trace_pen)
+    if settings.split_view and len(channels) > 1:
+        # Split view: each channel gets its own vertical slice
+        n_panes = len(channels)
+        pane_gap = 4
+        pane_h = (gh - pane_gap * (n_panes - 1)) // n_panes
+        for pane_idx, ch in enumerate(channels):
+            pane_y = gy + pane_idx * (pane_h + pane_gap)
+            ch_s = channel_settings.get(ch, {})
+            ch_vdiv = ch_s.get("v_per_div", 1.0)
+            ch_probe = ch_s.get("probe_factor", 1.0)
+            ch_effective = ch_vdiv * ch_probe
+            ch_offset = ch_s.get("offset", 0.0)
+            pane_v_half = (NUM_V_DIVS / 2) * ch_effective
 
-        # Scale voltage to display coordinates (like waveform_widget._voltage_scale)
-        # _voltage_scale = (display_vdiv / ch_effective) * ch_probe
-        # where ch_effective = ch_vdiv * ch_probe
-        ch_settings = channel_settings.get(ch, {})
-        ch_vdiv = ch_settings.get("v_per_div", 1.0)
-        ch_probe = ch_settings.get("probe_factor", 1.0)
-        ch_effective = ch_vdiv * ch_probe
-        if ch_effective > 0:
-            scale = (display_vdiv / ch_effective) * ch_probe
-        else:
-            scale = 1.0
+            def _pane_volt_to_y(v, _py=pane_y, _ph=pane_h, _vh=pane_v_half):
+                return _py + _ph - (v + _vh) / (2 * _vh) * _ph
 
-        t = wf.time_axis
-        v = wf.voltage * scale
+            # Pane border
+            p.setPen(QPen(QColor(pal["grid_center"]), 0.5))
+            p.drawRect(gx, pane_y, gw, pane_h)
 
-        # Build point path for performance
-        n = len(t)
-        if n < 2:
-            continue
-        prev_x = time_to_x(t[0])
-        prev_y = volt_to_y(v[0])
-        for i in range(1, n):
-            curr_x = time_to_x(t[i])
-            curr_y = volt_to_y(v[i])
-            p.drawLine(int(prev_x), int(prev_y), int(curr_x), int(curr_y))
-            prev_x = curr_x
-            prev_y = curr_y
-    p.restore()  # Remove clip
+            # Pane grid
+            grid_pen_split = QPen(QColor(pal["grid"]), 0.5, Qt.PenStyle.DotLine)
+            for gi in range(-NUM_V_DIVS // 2, NUM_V_DIVS // 2 + 1):
+                y_line = _pane_volt_to_y(gi * ch_effective)
+                p.setPen(grid_pen_split)
+                p.drawLine(gx, int(y_line), gx + gw, int(y_line))
+
+            # Channel label
+            label_font = QFont("Menlo", max(8, total_w // 180))
+            label_font.setBold(True)
+            p.setFont(label_font)
+            color = colors.get(ch, "#FFFFFF")
+            p.setPen(QColor(color))
+            p.drawText(gx + 4, pane_y + 14, f"CH{ch}")
+
+            # Trace
+            p.save()
+            p.setClipRect(gx, pane_y, gw, pane_h)
+            wf = waveforms[ch]
+            trace_pen = QPen(QColor(color), 1.5)
+            p.setPen(trace_pen)
+            t = wf.time_axis
+            v = wf.voltage * ch_probe
+            n = len(t)
+            if n >= 2:
+                prev_x = time_to_x(t[0])
+                prev_y = _pane_volt_to_y(v[0])
+                for i in range(1, n):
+                    curr_x = time_to_x(t[i])
+                    curr_y = _pane_volt_to_y(v[i])
+                    p.drawLine(int(prev_x), int(prev_y), int(curr_x), int(curr_y))
+                    prev_x = curr_x
+                    prev_y = curr_y
+            p.restore()
+
+            # V/div label for this pane
+            if settings.show_scale_labels:
+                scale_font = QFont("Menlo", max(7, total_w // 200))
+                p.setFont(scale_font)
+                p.setPen(QColor(pal["text_dim"]))
+                vdiv_str = format_si(ch_effective, "V/div")
+                p.drawText(gx + gw - p.fontMetrics().horizontalAdvance(vdiv_str) - 4,
+                           pane_y + pane_h - 4, vdiv_str)
+    else:
+        # Combined view: all channels overlaid
+        p.save()
+        p.setClipRect(gx, gy, gw, gh)
+        for ch in channels:
+            wf = waveforms[ch]
+            color = colors.get(ch, "#FFFFFF")
+            trace_pen = QPen(QColor(color), 1.5)
+            p.setPen(trace_pen)
+
+            ch_settings_ch = channel_settings.get(ch, {})
+            ch_vdiv = ch_settings_ch.get("v_per_div", 1.0)
+            ch_probe = ch_settings_ch.get("probe_factor", 1.0)
+            ch_effective = ch_vdiv * ch_probe
+            if ch_effective > 0:
+                scale = (display_vdiv / ch_effective) * ch_probe
+            else:
+                scale = 1.0
+
+            t = wf.time_axis
+            v = wf.voltage * scale
+
+            n = len(t)
+            if n < 2:
+                continue
+            prev_x = time_to_x(t[0])
+            prev_y = volt_to_y(v[0])
+            for i in range(1, n):
+                curr_x = time_to_x(t[i])
+                curr_y = volt_to_y(v[i])
+                p.drawLine(int(prev_x), int(prev_y), int(curr_x), int(curr_y))
+                prev_x = curr_x
+                prev_y = curr_y
+        p.restore()
 
     # --- Trigger crossing point on waveform ---
     if settings.show_trigger and trigger:

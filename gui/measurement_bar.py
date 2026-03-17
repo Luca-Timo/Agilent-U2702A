@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from gui.theme import (
     channel_color, format_voltage, format_current, format_frequency,
     format_time, format_percent, NUM_CHANNELS, TEXT_SECONDARY, ACCENT_BLUE,
+    MATH_COLOR, MATH_CH,
 )
 
 
@@ -228,6 +229,37 @@ class MeasurementBar(QWidget):
 
             self._channel_visible[ch] = False
 
+        # Math channel row
+        math_row_idx = self._num_channels + 1
+        math_ch_lbl = QLabel("  Math")
+        math_ch_lbl.setFixedWidth(50)
+        math_ch_lbl.setStyleSheet(
+            f"color: {MATH_COLOR}; font-weight: bold; font-size: 11px; "
+            "border: none; padding: 2px 4px;"
+        )
+        self._channel_labels[MATH_CH] = math_ch_lbl
+        grid.addWidget(math_ch_lbl, math_row_idx, 0)
+
+        self._value_labels[MATH_CH] = {}
+        for col_idx, (display_name, _, _) in enumerate(MEASUREMENT_TYPES):
+            val_lbl = QLabel("---")
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignRight
+                                 | Qt.AlignmentFlag.AlignVCenter)
+            val_lbl.setMinimumWidth(COL_MIN_WIDTH)
+            val_lbl.setStyleSheet(
+                f"color: {MATH_COLOR}; font-size: 11px; "
+                "font-family: Menlo, monospace; "
+                "border: none; padding: 2px 8px;"
+            )
+            val_lbl.setProperty("meas_ch", MATH_CH)
+            val_lbl.setProperty("meas_name", display_name)
+            val_lbl.setMouseTracking(True)
+            val_lbl.installEventFilter(self)
+            self._value_labels[MATH_CH][display_name] = val_lbl
+            grid.addWidget(val_lbl, math_row_idx, col_idx + 1)
+
+        self._channel_visible[MATH_CH] = False
+
         outer.addWidget(table_frame)
 
         # Apply initial visibility
@@ -245,24 +277,29 @@ class MeasurementBar(QWidget):
 
     def _apply_column_visibility(self):
         """Show/hide entire columns (header + all channel values)."""
+        all_channels = list(range(1, self._num_channels + 1)) + [MATH_CH]
         for display_name, _, _ in MEASUREMENT_TYPES:
             visible = display_name in self._enabled_measurements
             # Header
             self._header_labels[display_name].setVisible(visible)
-            # All channel values
-            for ch in range(1, self._num_channels + 1):
-                self._value_labels[ch][display_name].setVisible(visible)
+            # All channel values (including math)
+            for ch in all_channels:
+                if ch in self._value_labels:
+                    self._value_labels[ch][display_name].setVisible(visible)
 
     def _apply_row_visibility(self):
         """Show/hide channel rows and the entire table frame."""
         any_visible = False
-        for ch in range(1, self._num_channels + 1):
+        all_channels = list(range(1, self._num_channels + 1)) + [MATH_CH]
+        for ch in all_channels:
             visible = self._channel_visible.get(ch, False)
-            self._channel_labels[ch].setVisible(visible)
-            for lbl in self._value_labels[ch].values():
-                lbl.setVisible(
-                    visible and self._find_display_name(lbl) in self._enabled_measurements
-                )
+            if ch in self._channel_labels:
+                self._channel_labels[ch].setVisible(visible)
+            if ch in self._value_labels:
+                for lbl in self._value_labels[ch].values():
+                    lbl.setVisible(
+                        visible and self._find_display_name(lbl) in self._enabled_measurements
+                    )
             if visible:
                 any_visible = True
         self._table_frame.setVisible(any_visible)

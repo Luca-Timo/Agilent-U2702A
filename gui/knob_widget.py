@@ -103,6 +103,7 @@ class RotaryKnob(QWidget):
         self._min_val = 0.0
         self._max_val = 1.0
         self._step = 0.1
+        self._allow_unclamped_input = False  # Popup can exceed range
 
         # Drag state
         self._dragging = False
@@ -425,7 +426,23 @@ class RotaryKnob(QWidget):
             # Convert from display space to internal raw value
             if self._display_multiplier != 0:
                 value /= self._display_multiplier
-            self.set_value(value, emit=True)
+            if self._allow_unclamped_input:
+                # Accept any value from keyboard — extend range if needed
+                if self._continuous:
+                    if value > self._max_val:
+                        self._max_val = value
+                    if value < self._min_val:
+                        self._min_val = value
+                self._value = value
+                if not self._continuous and self._values:
+                    self._value_index = min(
+                        range(len(self._values)),
+                        key=lambda i: abs(self._values[i] - value)
+                    )
+                self._update_display()
+                self.value_changed.emit(self._value)
+            else:
+                self.set_value(value, emit=True)
 
         except (ValueError, IndexError):
             pass  # Invalid input — ignore

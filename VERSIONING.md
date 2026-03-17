@@ -2,7 +2,7 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.8.2-alpha
+> Current version: 0.8.3-alpha
 > Last updated: 2026-03-13
 
 ---
@@ -181,11 +181,13 @@
 - [x] Import waveform data (CSV/JSON/NPZ) for display
 - [x] Cursor labels: C-X1/C-X2 (time) and C-Y1/C-Y2 (voltage)
 - [x] Knob scroll disabled by default
+- [ ] Multi-graph layout (per-channel separate graphs, dedicated FFT/math graph panes)
 - [ ] FFT math function display
+- [ ] Math functions (CH1+CH2, CH1-CH2, CH1*CH2)
 - [ ] Waveform averaging
 - [ ] Reference waveform storage/recall
 
-**Milestone**: Can export data for analysis in other tools.
+**Milestone**: Can export data for analysis in other tools + advanced display modes.
 
 ---
 

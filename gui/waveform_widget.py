@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QRubberBand
 
 from gui.theme import (
     BG_PLOT, GRID_COLOR, TEXT_DIM, ACCENT_BLUE,
-    NUM_CHANNELS, channel_color,
+    NUM_CHANNELS, channel_color, MATH_CH,
 )
 from processing.waveform import WaveformData
 
@@ -65,6 +65,7 @@ class WaveformWidget(pg.PlotWidget):
         self._probe_factors: dict[int, float] = {}
         self._current_mode: dict[int, bool] = {}
         self._shunt_resistance: dict[int, float] = {}
+        self._inverted: dict[int, bool] = {}
 
         # Per-channel effective V/div (raw × probe) for independent scaling.
         # Each channel's waveform is scaled by display_vdiv / ch_vdiv
@@ -328,6 +329,8 @@ class WaveformWidget(pg.PlotWidget):
             shunt_r = self._shunt_resistance.get(ch, 1.0)
             if shunt_r > 0:
                 scale /= shunt_r
+        if self._inverted.get(ch, False):
+            scale = -scale
         return scale
 
     def _replot_traces(self, channels: list[int] | None = None):
@@ -342,10 +345,14 @@ class WaveformWidget(pg.PlotWidget):
             if ch in self._raw_waveforms and ch in self._traces:
                 time_axis, voltage = self._raw_waveforms[ch]
                 scale = self._voltage_scale(ch)
-                if scale != 1.0:
-                    self._traces[ch].setData(time_axis, voltage * scale)
-                else:
-                    self._traces[ch].setData(time_axis, voltage)
+                display_v = voltage * scale if scale != 1.0 else voltage
+                # Virtual channels (math): apply offset to data since there's
+                # no hardware offset. Real channels get offset from the scope.
+                if ch == MATH_CH:
+                    offset = self._channel_offsets.get(ch, 0.0)
+                    if offset != 0.0:
+                        display_v = display_v + offset * scale
+                self._traces[ch].setData(time_axis, display_v)
 
     def _update_axis_range(self):
         """Update axis range based on current V/div, T/div, and position."""
@@ -594,6 +601,11 @@ class WaveformWidget(pg.PlotWidget):
         self._shunt_resistance[channel] = shunt_r
         self._replot_traces([channel])
 
+    def set_channel_inverted(self, channel: int, inverted: bool):
+        """Toggle voltage inversion for a channel."""
+        self._inverted[channel] = inverted
+        self._replot_traces([channel])
+
     def set_channel_enabled(self, channel: int, enabled: bool):
         """Show or hide a channel trace and its GND marker."""
         if enabled:
@@ -627,6 +639,9 @@ class WaveformWidget(pg.PlotWidget):
         """Update a channel's offset — moves its GND marker on the Y-axis."""
         self._channel_offsets[channel] = offset
         self._update_gnd_positions()
+        # Virtual channels (math): offset shifts the trace data, so replot
+        if channel == MATH_CH:
+            self._replot_traces([channel])
 
     def set_trigger_position(self, time_pos: float):
         """Update the trigger position marker on the X-axis (▼ at top)."""
@@ -826,6 +841,13 @@ class WaveformWidget(pg.PlotWidget):
             display_voltage = waveform.voltage * scale
         else:
             display_voltage = waveform.voltage
+
+        # Virtual channels (math): apply offset to data since there's
+        # no hardware offset. Real channels get offset from the scope.
+        if ch == MATH_CH:
+            offset = self._channel_offsets.get(ch, 0.0)
+            if offset != 0.0:
+                display_voltage = display_voltage + offset * scale
 
         self._traces[ch].setData(waveform.time_axis, display_voltage)
 

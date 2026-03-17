@@ -16,6 +16,7 @@ from PySide6.QtGui import QFont
 from gui.theme import (
     NUM_CHANNELS, channel_color, format_voltage, format_current,
     format_frequency, BG_PLOT, BG_DARK, TEXT_SECONDARY, ACCENT_BLUE,
+    MATH_CH,
 )
 from processing.dmm import DMMAccumulator, DMMReading, DMMMode
 
@@ -34,9 +35,10 @@ class ChannelDMMCard(QFrame):
     - Frequency reading (smaller font)
     """
 
-    def __init__(self, channel: int, parent=None):
+    def __init__(self, channel: int, label: str = None, parent=None):
         super().__init__(parent)
         self._channel = channel
+        self._label = label or f"CH{channel}"
         self._color = channel_color(channel)
         self._is_current_mode = False
 
@@ -59,7 +61,7 @@ class ChannelDMMCard(QFrame):
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
 
-        self._ch_label = QLabel(f"CH{self._channel}")
+        self._ch_label = QLabel(self._label)
         self._ch_label.setStyleSheet(
             f"color: {self._color}; font-size: 14px; font-weight: bold; "
             "border: none;"
@@ -318,6 +320,14 @@ class DMMWidget(QWidget):
             card.setVisible(self._channel_visible.get(ch, False))
             self._cards[ch] = card
             layout.addWidget(card, stretch=1)
+
+        # Math channel card (hidden until math is enabled)
+        math_card = ChannelDMMCard(MATH_CH, label="Math")
+        math_card.setVisible(False)
+        self._cards[MATH_CH] = math_card
+        self._accumulators[MATH_CH] = DMMAccumulator()
+        self._channel_visible[MATH_CH] = False
+        layout.addWidget(math_card, stretch=1)
 
     # --- Internal ---
 

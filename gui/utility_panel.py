@@ -27,6 +27,9 @@ class UtilityPanel(QGroupBox):
     hold_toggled = Signal(bool)
     relative_toggled = Signal(bool)
     range_lock_toggled = Signal(bool)
+    averaging_changed = Signal(int)  # 0 = off, N = average count
+
+    _AVG_COUNTS = [0, 2, 4, 8, 16, 32, 64, 128]
 
     # Carousel: Off → Both → X Only → Y Only → Off …
     _CURSOR_MODES = [
@@ -140,6 +143,14 @@ class UtilityPanel(QGroupBox):
 
         layout.addLayout(cursor_row)
 
+        # --- Averaging button (cycles OFF → 2 → 4 → … → 128 → OFF) ---
+        self._avg_idx = 0
+        self._avg_btn = QPushButton("Avg: OFF")
+        self._avg_btn.setFixedHeight(28)
+        self._avg_btn.setStyleSheet("QPushButton { font-size: 11px; }")
+        self._avg_btn.clicked.connect(self._on_avg_clicked)
+        layout.addWidget(self._avg_btn)
+
     @staticmethod
     def _dmm_extra_style(active_color: str | None = None) -> str:
         """Stylesheet for DMM extra buttons (Hold/REL/Range Lock).
@@ -232,6 +243,12 @@ class UtilityPanel(QGroupBox):
         self._cursor_btn.setText(label)
         self.cursor_mode_changed.emit(mode)
 
+    def _on_avg_clicked(self):
+        self._avg_idx = (self._avg_idx + 1) % len(self._AVG_COUNTS)
+        count = self._AVG_COUNTS[self._avg_idx]
+        self._avg_btn.setText(f"Avg: {count}" if count > 0 else "Avg: OFF")
+        self.averaging_changed.emit(count)
+
     # --- Public API ---
 
     @property
@@ -301,3 +318,18 @@ class UtilityPanel(QGroupBox):
         """Programmatically set Range Lock state."""
         self._range_btn.setChecked(active)
         self._on_range_lock_toggled()
+
+    def set_averaging(self, count: int):
+        """Programmatically set averaging count (does NOT emit signal)."""
+        for i, c in enumerate(self._AVG_COUNTS):
+            if c == count:
+                self._avg_idx = i
+                break
+        else:
+            self._avg_idx = 0
+            count = 0
+        self._avg_btn.setText(f"Avg: {count}" if count > 0 else "Avg: OFF")
+
+    @property
+    def averaging_count(self) -> int:
+        return self._AVG_COUNTS[self._avg_idx]

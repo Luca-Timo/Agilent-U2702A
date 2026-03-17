@@ -23,9 +23,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gui.theme import (
     NUM_CHANNELS, channel_color, format_tdiv, format_vdiv,
     STATUS_GREEN, STATUS_YELLOW, STATUS_RED, ACCENT_BLUE,
-    VDIV_VALUES, TDIV_VALUES,
+    VDIV_VALUES, TDIV_VALUES, MATH_CH,
 )
 from gui.waveform_widget import WaveformWidget
+from gui.waveform_container import WaveformContainer
 from gui.channel_panel import ChannelPanel
 from gui.timebase_panel import TimebasePanel
 from gui.trigger_panel import TriggerPanel
@@ -39,6 +40,7 @@ from gui.dmm_widget import DMMWidget
 from processing.waveform import WaveformData
 from processing import measurements
 from processing.autoscale import pick_vdiv, pick_tdiv, compute_center_offset
+from processing.averaging import WaveformAverager
 
 
 class StatusIndicator(QLabel):
@@ -68,7 +70,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.8.2-alpha"
+APP_VERSION = "0.8.3-alpha"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -345,6 +347,42 @@ class MainWindow(QMainWindow):
         self_cal_action.triggered.connect(self._show_self_calibration)
         tools_menu.addAction(self_cal_action)
 
+        # View menu
+        view_menu = menubar.addMenu("View")
+
+        self._split_action = QAction("Split Channels", self)
+        self._split_action.setCheckable(True)
+        self._split_action.setChecked(False)
+        self._split_action.triggered.connect(self._on_split_toggled)
+        view_menu.addAction(self._split_action)
+
+        view_menu.addSeparator()
+
+        # Reference waveform actions
+        save_ref_ch1 = QAction("Save Reference CH1", self)
+        save_ref_ch1.triggered.connect(lambda: self._save_reference(1))
+        view_menu.addAction(save_ref_ch1)
+
+        save_ref_ch2 = QAction("Save Reference CH2", self)
+        save_ref_ch2.triggered.connect(lambda: self._save_reference(2))
+        view_menu.addAction(save_ref_ch2)
+
+        self._show_ref_ch1 = QAction("Show Reference CH1", self)
+        self._show_ref_ch1.setCheckable(True)
+        self._show_ref_ch1.setEnabled(False)
+        self._show_ref_ch1.triggered.connect(lambda c: self._toggle_reference(1, c))
+        view_menu.addAction(self._show_ref_ch1)
+
+        self._show_ref_ch2 = QAction("Show Reference CH2", self)
+        self._show_ref_ch2.setCheckable(True)
+        self._show_ref_ch2.setEnabled(False)
+        self._show_ref_ch2.triggered.connect(lambda c: self._toggle_reference(2, c))
+        view_menu.addAction(self._show_ref_ch2)
+
+        clear_refs = QAction("Clear References", self)
+        clear_refs.triggered.connect(self._clear_references)
+        view_menu.addAction(clear_refs)
+
         # Help menu
         help_menu = menubar.addMenu("Help")
 
@@ -457,11 +495,12 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
-        # Waveform display
-        self._waveform = WaveformWidget(num_channels=NUM_CHANNELS)
-        self._waveform.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                      QSizePolicy.Policy.Expanding)
-        left_layout.addWidget(self._waveform, stretch=1)
+        # Waveform display (container wraps WaveformWidget + split panes)
+        self._container = WaveformContainer(num_channels=NUM_CHANNELS)
+        self._container.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Expanding)
+        self._waveform = self._container  # alias for backward compat
+        left_layout.addWidget(self._container, stretch=1)
 
         # DMM display (hidden until DMM mode activated)
         self._dmm_widget = DMMWidget(num_channels=NUM_CHANNELS)
@@ -511,6 +550,16 @@ class MainWindow(QMainWindow):
         # 3. Vertical — per-channel columns (like Keysight 1/2/3/4 buttons)
         self._channel_panel = ChannelPanel(num_channels=NUM_CHANNELS)
         right_layout.addWidget(self._channel_panel)
+
+        # 4. FFT controls
+        from gui.fft_panel import FFTPanel
+        self._fft_panel = FFTPanel()
+        right_layout.addWidget(self._fft_panel)
+
+        # 5. Math controls
+        from gui.math_panel import MathPanel
+        self._math_panel = MathPanel()
+        right_layout.addWidget(self._math_panel)
 
         # Scope-only panels — hidden during DMM mode
         self._scope_panels = [self._timebase_panel, self._trigger_panel]
@@ -638,6 +687,35 @@ class MainWindow(QMainWindow):
             self._on_current_mode_changed
         )
 
+        # --- Averaging ---
+        self._averager = WaveformAverager(count=0)
+        self._utility_panel.averaging_changed.connect(self._on_averaging_changed)
+
+        # --- FFT ---
+        self._fft_enabled = False
+        self._fft_source = 1
+        self._fft_scale = "dbv"
+        self._fft_window = "hann"
+        self._fft_panel.fft_toggled.connect(self._on_fft_toggled)
+        self._fft_panel.fft_source_changed.connect(self._on_fft_source_changed)
+        self._fft_panel.fft_scale_changed.connect(self._on_fft_scale_changed)
+        self._fft_panel.fft_window_changed.connect(self._on_fft_window_changed)
+
+        # --- Math ---
+        self._math_enabled = False
+        self._math_op = "add"
+        self._math_panel.math_toggled.connect(self._on_math_toggled)
+        self._math_panel.math_op_changed.connect(self._on_math_op_changed)
+        self._channel_panel.math_toggled.connect(self._on_math_button_toggled)
+
+        # --- Reference waveforms ---
+        self._ref_waveforms: dict[int, WaveformData] = {}
+        self._ref_visible: dict[int, bool] = {}
+
+        # --- Channel invert ---
+        self._channel_inverted: dict[int, bool] = {}
+        self._channel_panel.invert_changed.connect(self._on_invert_changed)
+
         # --- Measurement hover → highlight lines ---
         self._measurement_bar.value_hovered.connect(
             self._on_measurement_hovered
@@ -694,6 +772,11 @@ class MainWindow(QMainWindow):
         return st.v_per_div * st.probe_factor
 
     def _on_vdiv_changed(self, ch: int, value: float):
+        if ch == MATH_CH:
+            # Math virtual channel — no SCPI, no probe
+            self._container.set_math_vdiv(value)
+            self._channel_panel.math_column.update_offset_range(value)
+            return
         self.sig_set_vdiv.emit(ch, value)
         # Always update this channel's effective V/div for per-channel scaling
         probe = self._channel_panel.get_state(ch).probe_factor
@@ -707,8 +790,14 @@ class MainWindow(QMainWindow):
         # Refresh cursor readout (V/div ratio changed)
         if self._waveform._cursor_mode in ("voltage", "both"):
             self._push_volt_cursor_readout()
+        # Update math V/div range (multiply needs ch1*ch2 range)
+        if self._math_enabled:
+            self._update_math_vdiv_range()
 
     def _on_offset_changed(self, ch: int, value: float):
+        if ch == MATH_CH:
+            self._container.set_math_offset(value)
+            return
         self.sig_set_offset.emit(ch, value)
         self._waveform.set_channel_offset(ch, value)
         # If this is the trigger source channel, update trigger line position
@@ -759,6 +848,9 @@ class MainWindow(QMainWindow):
         # measurement bar updates immediately (without waiting for the
         # next acquisition frame).
         self._recompute_channel_measurements(ch)
+        # Update math V/div range (probe affects effective V/div)
+        if self._math_enabled:
+            self._update_math_vdiv_range()
 
     def _on_trigger_slope_changed(self, slope: str):
         self.sig_set_trigger_slope.emit(slope)
@@ -856,6 +948,8 @@ class MainWindow(QMainWindow):
                 self._dmm_widget.set_channel_color(
                     ch, self._channel_colors.get(ch, channel_color(ch))
                 )
+            # Show math card if math is enabled
+            self._dmm_widget.set_channel_visible(MATH_CH, self._math_enabled)
             # Auto-start continuous acquisition if not already running
             if not self._is_running and self._bridge:
                 self._dmm_auto_started = True
@@ -905,6 +999,183 @@ class MainWindow(QMainWindow):
             self._sync_cursor_channel_mode()
         # Recompute measurements with the new shunt resistance / mode
         self._recompute_channel_measurements(ch)
+
+    def _on_invert_changed(self, ch: int, inverted: bool):
+        """Handle channel invert toggle."""
+        self._channel_inverted[ch] = inverted
+        self._waveform.set_channel_inverted(ch, inverted)
+        self._recompute_channel_measurements(ch)
+
+    def _on_averaging_changed(self, count: int):
+        """Handle averaging count change from utility panel."""
+        self._averager.set_count(count)
+
+    def _on_split_toggled(self, checked: bool):
+        """Handle View → Split Channels toggle."""
+        self._container.set_layout_mode("split" if checked else "combined")
+        # Refresh FFT/math data in newly rebuilt split panes
+        self._recompute_fft_math()
+
+    def _on_fft_toggled(self, enabled: bool):
+        self._fft_enabled = enabled
+        if enabled:
+            self._container.add_fft_pane()
+        else:
+            self._container.remove_fft_pane()
+        self._recompute_fft_math()
+
+    def _on_fft_source_changed(self, ch: int):
+        self._fft_source = ch
+        self._recompute_fft_math()
+
+    def _on_fft_scale_changed(self, scale: str):
+        self._fft_scale = scale
+        self._recompute_fft_math()
+
+    def _on_fft_window_changed(self, window: str):
+        self._fft_window = window
+        self._recompute_fft_math()
+
+    def _on_math_toggled(self, enabled: bool):
+        self._math_enabled = enabled
+        self._channel_panel.set_math_enabled(enabled)
+        self._measurement_bar.set_channel_visible(MATH_CH, enabled)
+        self._dmm_widget.set_channel_visible(MATH_CH, enabled)
+        if enabled:
+            self._update_math_vdiv_range(auto_set=True)
+            self._container.add_math_pane()
+            # Apply current math column V/div and offset
+            math_col = self._channel_panel.math_column
+            self._container.set_math_vdiv(math_col.vdiv)
+            self._container.set_math_offset(math_col.offset)
+        else:
+            self._container.remove_math_pane()
+            self._measurement_bar.clear_channel(MATH_CH)
+        self._recompute_fft_math()
+
+    def _on_math_button_toggled(self, enabled: bool):
+        """Handle M button toggle from channel panel — sync with math panel.
+
+        set_enabled on math_panel will trigger math_toggled signal
+        which calls _on_math_toggled, so no need to call it directly.
+        """
+        self._math_panel.set_enabled(enabled)
+
+    def _on_math_op_changed(self, op: str):
+        self._math_op = op
+        self._update_math_vdiv_range(auto_set=True)
+        self._recompute_fft_math()
+
+    def _update_math_vdiv_range(self, auto_set: bool = False):
+        """Update math V/div knob range based on operation and channel settings.
+
+        For multiply, the result range is V1 * V2, so max V/div must cover
+        ch1_vdiv * probe1 * ch2_vdiv * probe2.
+
+        Args:
+            auto_set: If True, also set V/div to max_needed (used when
+                      operation changes or math is first enabled).
+        """
+        s1 = self._channel_panel.get_state(1)
+        s2 = self._channel_panel.get_state(2)
+        eff1 = s1.v_per_div * s1.probe_factor
+        eff2 = s2.v_per_div * s2.probe_factor
+        if self._math_op == "mul":
+            max_needed = eff1 * eff2
+        else:
+            max_needed = max(eff1, eff2)
+        math_col = self._channel_panel.math_column
+        math_col.update_vdiv_range(max_needed)
+        if auto_set:
+            math_col.set_vdiv(max_needed)
+            snapped = math_col.vdiv
+            self._container.set_math_vdiv(snapped)
+        # Update offset range to match current math V/div
+        math_col.update_offset_range(math_col.vdiv)
+
+    def _probe_scaled_voltage(self, ch: int):
+        """Return probe-scaled (and inverted if applicable) voltage for a channel."""
+        wf = self._last_waveforms.get(ch)
+        if wf is None:
+            return None
+        probe = self._channel_panel.get_state(ch).probe_factor
+        v = wf.voltage * probe if probe != 1.0 else wf.voltage
+        if self._channel_inverted.get(ch, False):
+            v = -v
+        return v
+
+    def _recompute_fft_math(self):
+        """Recompute FFT and math from cached waveforms (no new acquisition needed)."""
+        if self._fft_enabled:
+            wf = self._last_waveforms.get(self._fft_source)
+            if wf is not None:
+                from processing.fft import compute_fft, magnitude_to_dbv
+                v = self._probe_scaled_voltage(self._fft_source)
+                freq, mag = compute_fft(v, wf.time_axis, self._fft_window)
+                if self._fft_scale == "dbv":
+                    mag = magnitude_to_dbv(mag)
+                self._container.update_fft(freq, mag, self._fft_scale)
+
+        if self._math_enabled:
+            from processing.math_ops import MATH_OPS
+            wf1 = self._last_waveforms.get(1)
+            wf2 = self._last_waveforms.get(2)
+            if wf1 is not None and wf2 is not None:
+                v1 = self._probe_scaled_voltage(1)
+                v2 = self._probe_scaled_voltage(2)
+                op_func = MATH_OPS.get(self._math_op)
+                if op_func:
+                    result = op_func(v1, v2)
+                    time_ax = wf1.time_axis[:len(result)]
+                    op_labels = {"add": "CH1+CH2", "sub": "CH1−CH2",
+                                 "mul": "CH1×CH2", "div": "CH1÷CH2"}
+                    self._container.update_math(
+                        time_ax, result, op_labels.get(self._math_op, "Math"))
+                    # Compute math measurements
+                    meas = measurements.compute_all(result, time_ax)
+                    self._measurement_bar.update_measurements(MATH_CH, meas)
+
+    def _save_reference(self, ch: int):
+        """Snapshot current waveform as reference."""
+        wf = self._last_waveforms.get(ch)
+        if wf is None:
+            return
+        self._ref_waveforms[ch] = wf
+        self._ref_visible[ch] = True
+        probe = self._channel_panel.get_state(ch).probe_factor
+        voltage = wf.voltage * probe
+        if self._channel_inverted.get(ch, False):
+            voltage = -voltage
+        self._container.update_reference(ch, wf.time_axis, voltage, visible=True)
+        # Enable the show toggle
+        action = self._show_ref_ch1 if ch == 1 else self._show_ref_ch2
+        action.setEnabled(True)
+        action.setChecked(True)
+
+    def _toggle_reference(self, ch: int, visible: bool):
+        """Toggle reference waveform visibility."""
+        self._ref_visible[ch] = visible
+        wf = self._ref_waveforms.get(ch)
+        if wf is None:
+            return
+        if visible:
+            probe = self._channel_panel.get_state(ch).probe_factor
+            voltage = wf.voltage * probe
+            if self._channel_inverted.get(ch, False):
+                voltage = -voltage
+            self._container.update_reference(ch, wf.time_axis, voltage, visible=True)
+        else:
+            self._container.update_reference(ch, wf.time_axis, wf.voltage, visible=False)
+
+    def _clear_references(self):
+        """Remove all reference waveforms."""
+        self._ref_waveforms.clear()
+        self._ref_visible.clear()
+        self._container.clear_references()
+        self._show_ref_ch1.setChecked(False)
+        self._show_ref_ch1.setEnabled(False)
+        self._show_ref_ch2.setChecked(False)
+        self._show_ref_ch2.setEnabled(False)
 
     def _on_cursor_channel_selected(self, ch: int):
         """Handle channel selector click on cursor readout bar."""
@@ -1293,9 +1564,38 @@ class MainWindow(QMainWindow):
                 ch, waveform.voltage,
                 waveform.time_axis, effective_probe,
             )
+
+            # Math in DMM mode
+            if self._math_enabled:
+                from processing.math_ops import MATH_OPS
+                v1 = self._probe_scaled_voltage(1)
+                v2 = self._probe_scaled_voltage(2)
+                if v1 is not None and v2 is not None:
+                    op_func = MATH_OPS.get(self._math_op)
+                    if op_func:
+                        result = op_func(v1, v2)
+                        wf1 = self._last_waveforms[1]
+                        time_ax = wf1.time_axis[:len(result)]
+                        self._dmm_widget.update_waveform(
+                            MATH_CH, result, time_ax, 1.0)
             return
 
-        # Oscilloscope path — update waveform display + measurements
+        # Oscilloscope path — apply averaging if enabled
+        if self._averager.count > 1:
+            avg_voltage = self._averager.add(ch, waveform.voltage)
+            waveform = WaveformData(
+                channel=waveform.channel,
+                raw_adc=waveform.raw_adc,
+                voltage=avg_voltage,
+                time_axis=waveform.time_axis,
+                v_per_div=waveform.v_per_div,
+                offset=waveform.offset,
+                t_per_div=waveform.t_per_div,
+                probe_factor=waveform.probe_factor,
+                timestamp=waveform.timestamp,
+                trigger_sample=waveform.trigger_sample,
+            )
+
         self._waveform.update_waveform(waveform)
 
         # Compute and display measurements.
@@ -1308,12 +1608,43 @@ class MainWindow(QMainWindow):
         else:
             meas_voltage = waveform.voltage
 
+        # Apply inversion
+        if self._channel_inverted.get(ch, False):
+            meas_voltage = -meas_voltage
+
         # Convert to current if channel is in current mode
         if ch_state.current_mode and ch_state.shunt_resistance > 0:
             meas_voltage = meas_voltage / ch_state.shunt_resistance
 
         meas = measurements.compute_all(meas_voltage, waveform.time_axis)
         self._measurement_bar.update_measurements(ch, meas)
+
+        # FFT — compute if enabled and this is the source channel
+        if self._fft_enabled and ch == self._fft_source:
+            from processing.fft import compute_fft, magnitude_to_dbv
+            freq, mag = compute_fft(meas_voltage, waveform.time_axis, self._fft_window)
+            if self._fft_scale == "dbv":
+                mag = magnitude_to_dbv(mag)
+            self._container.update_fft(freq, mag, self._fft_scale)
+
+        # Math — compute if enabled and we have both channels
+        if self._math_enabled:
+            from processing.math_ops import MATH_OPS
+            v1 = self._probe_scaled_voltage(1)
+            v2 = self._probe_scaled_voltage(2)
+            if v1 is not None and v2 is not None:
+                op_func = MATH_OPS.get(self._math_op)
+                if op_func:
+                    result = op_func(v1, v2)
+                    wf1 = self._last_waveforms[1]
+                    time_ax = wf1.time_axis[:len(result)]
+                    op_labels = {"add": "CH1+CH2", "sub": "CH1−CH2",
+                                 "mul": "CH1×CH2", "div": "CH1÷CH2"}
+                    self._container.update_math(
+                        time_ax, result, op_labels.get(self._math_op, "Math"))
+                    # Compute math measurements
+                    math_meas = measurements.compute_all(result, time_ax)
+                    self._measurement_bar.update_measurements(MATH_CH, math_meas)
 
     def _recompute_channel_measurements(self, ch: int):
         """Recompute measurements for a channel using cached waveform data.
@@ -1330,6 +1661,8 @@ class MainWindow(QMainWindow):
             meas_voltage = wf.voltage * probe
         else:
             meas_voltage = wf.voltage
+        if self._channel_inverted.get(ch, False):
+            meas_voltage = -meas_voltage
         if ch_state.current_mode and ch_state.shunt_resistance > 0:
             meas_voltage = meas_voltage / ch_state.shunt_resistance
         meas = measurements.compute_all(meas_voltage, wf.time_axis)
@@ -1825,6 +2158,7 @@ class MainWindow(QMainWindow):
         dlg = ExportDialog(
             has_data=True,
             cursor_mode=self._waveform._cursor_mode,
+            split_view=self._container.mode == "split",
             parent=self,
         )
         if dlg.exec() != ExportDialog.DialogCode.Accepted:

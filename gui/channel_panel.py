@@ -20,7 +20,7 @@ from PySide6.QtGui import QDoubleValidator
 
 from gui.theme import (
     VDIV_VALUES, format_vdiv, format_adiv, format_voltage, format_current,
-    channel_color, NUM_CHANNELS,
+    channel_color, NUM_CHANNELS, MATH_COLOR, MATH_CH,
 )
 from gui.knob_widget import RotaryKnob
 
@@ -37,6 +37,7 @@ class ChannelState:
     probe_factor: float = 1.0
     current_mode: bool = False        # True = display as current (I = V/R)
     shunt_resistance: float = 1.0     # Ohms (for current mode)
+    inverted: bool = False            # True = negate voltage for display
 
 
 
@@ -50,6 +51,7 @@ class ChannelColumn(QWidget):
     bwlimit_changed = Signal(int, bool)
     probe_changed = Signal(int, float)
     current_mode_changed = Signal(int, bool, float)  # ch, active, shunt_R
+    invert_changed = Signal(int, bool)               # ch, inverted
 
     def __init__(self, channel: int, parent=None):
         super().__init__(parent)
@@ -154,6 +156,28 @@ class ChannelColumn(QWidget):
         va_layout.addWidget(self._va_btn)
         va_layout.addStretch()
         layout.addLayout(va_layout)
+
+        # Invert toggle button
+        inv_layout = QHBoxLayout()
+        inv_layout.addStretch()
+        self._inv_btn = QPushButton("INV")
+        self._inv_btn.setFixedSize(46, 28)
+        self._inv_btn.setCheckable(True)
+        self._inv_btn.setToolTip("Invert channel (negate voltage)")
+        self._inv_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; font-weight: bold; "
+            "color: #cccccc; background-color: #2a2a2a; "
+            "border: 1px solid #555555; border-radius: 4px; "
+            "padding: 2px 4px; }"
+            "QPushButton:hover { background-color: #3a3a3a; "
+            "border-color: #888888; }"
+            "QPushButton:checked { background-color: #cc4444; color: white; "
+            "border-color: #cc4444; }"
+        )
+        self._inv_btn.clicked.connect(self._on_invert_toggled)
+        inv_layout.addWidget(self._inv_btn)
+        inv_layout.addStretch()
+        layout.addLayout(inv_layout)
 
         # Shunt resistance text input (hidden until current mode ON)
         shunt_layout = QHBoxLayout()
@@ -287,6 +311,15 @@ class ChannelColumn(QWidget):
             shunt = self._get_shunt_value()
             self.current_mode_changed.emit(self._channel, True, shunt)
 
+    def _on_invert_toggled(self):
+        inverted = self._inv_btn.isChecked()
+        self.invert_changed.emit(self._channel, inverted)
+
+    def set_inverted(self, inverted: bool):
+        self._inv_btn.blockSignals(True)
+        self._inv_btn.setChecked(inverted)
+        self._inv_btn.blockSignals(False)
+
     def _apply_probe_to_knob(self):
         """Update V/div knob display multiplier for current probe factor.
 
@@ -364,6 +397,229 @@ class ChannelColumn(QWidget):
         self._apply_probe_to_knob()
 
 
+class MathColumn(QWidget):
+    """Simplified channel column for the math trace — button + V/div + offset."""
+
+    vdiv_changed = Signal(float)
+    offset_changed = Signal(float)
+    math_toggled = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._vdiv = VDIV_VALUES[7]  # 1.0 V/div
+        self._offset = 0.0
+        self._math_active = False
+        self._setup_ui()
+        self.set_controls_enabled(False)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(4)
+
+        # Math channel button (toggleable like CH1/CH2)
+        self._btn = QPushButton("M")
+        self._btn.setFixedSize(50, 40)
+        self._btn.setCheckable(True)
+        font = self._btn.font()
+        font.setPointSize(16)
+        font.setBold(True)
+        self._btn.setFont(font)
+        self._btn.clicked.connect(self._on_toggle)
+        self._update_button_style()
+        layout.addWidget(self._btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # V/div knob — continuous range (math is virtual, no hardware constraint)
+        self._vdiv_knob = RotaryKnob("V/div")
+        self._vdiv_knob.set_range(0.001, 10.0, 0.001, self._vdiv)
+        self._vdiv_knob._allow_unclamped_input = True  # Popup accepts any value
+        self._vdiv_knob.set_format_func(format_vdiv)
+        self._vdiv_knob.value_changed.connect(self._on_vdiv_changed)
+        layout.addWidget(self._vdiv_knob, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Effective V/div label spacer (matches ChannelColumn)
+        eff_spacer = QLabel("")
+        eff_spacer.setVisible(False)
+        layout.addWidget(eff_spacer, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Offset knob
+        self._offset_knob = RotaryKnob("Offset")
+        self._offset_knob.set_range(-50.0, 50.0, 0.1, 0.0)
+        self._offset_knob._allow_unclamped_input = True  # Popup accepts any value
+        self._offset_knob.set_format_func(format_voltage)
+        self._offset_knob.value_changed.connect(self._on_offset_changed)
+        layout.addWidget(self._offset_knob, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Coupling spacer (matches DC/AC combo height)
+        cpl_spacer = QHBoxLayout()
+        cpl_dummy = QComboBox()
+        cpl_dummy.addItem("—")
+        cpl_dummy.setFixedWidth(55)
+        cpl_dummy.setEnabled(False)
+        cpl_dummy.setStyleSheet(
+            "QComboBox { background-color: #2a2a2a; color: #555555; "
+            "border: 1px solid #333333; border-radius: 3px; }"
+        )
+        cpl_spacer.addStretch()
+        cpl_spacer.addWidget(cpl_dummy)
+        cpl_spacer.addStretch()
+        layout.addLayout(cpl_spacer)
+
+        # Probe spacer (matches probe combo height)
+        prb_spacer = QHBoxLayout()
+        prb_dummy = QComboBox()
+        prb_dummy.addItem("—")
+        prb_dummy.setFixedWidth(75)
+        prb_dummy.setEnabled(False)
+        prb_dummy.setStyleSheet(
+            "QComboBox { background-color: #2a2a2a; color: #555555; "
+            "border: 1px solid #333333; border-radius: 3px; }"
+        )
+        prb_spacer.addStretch()
+        prb_spacer.addWidget(prb_dummy)
+        prb_spacer.addStretch()
+        layout.addLayout(prb_spacer)
+
+        # V/A spacer (matches V/A button height)
+        va_spacer = QHBoxLayout()
+        va_spacer.setSpacing(2)
+        va_spacer.addStretch()
+        va_dummy = QPushButton("V")
+        va_dummy.setFixedSize(38, 30)
+        va_dummy.setEnabled(False)
+        va_dummy.setStyleSheet(
+            "QPushButton { font-size: 16px; font-weight: bold; "
+            "color: #555555; background-color: #2a2a2a; "
+            "border: 1px solid #333333; border-radius: 4px; "
+            "padding: 2px 0px; }"
+        )
+        va_spacer.addWidget(va_dummy)
+        va_spacer.addStretch()
+        layout.addLayout(va_spacer)
+
+        # INV spacer (matches INV button height)
+        inv_spacer = QHBoxLayout()
+        inv_spacer.addStretch()
+        inv_dummy = QPushButton("INV")
+        inv_dummy.setFixedSize(46, 28)
+        inv_dummy.setEnabled(False)
+        inv_dummy.setStyleSheet(
+            "QPushButton { font-size: 11px; font-weight: bold; "
+            "color: #555555; background-color: #2a2a2a; "
+            "border: 1px solid #333333; border-radius: 4px; "
+            "padding: 2px 4px; }"
+        )
+        inv_spacer.addWidget(inv_dummy)
+        inv_spacer.addStretch()
+        layout.addLayout(inv_spacer)
+
+        # Shunt spacer (matches shunt widget — hidden, retains size)
+        shunt_spacer = QWidget()
+        shunt_inner = QHBoxLayout(shunt_spacer)
+        shunt_inner.setSpacing(4)
+        shunt_inner.addStretch()
+        shunt_inp = QLineEdit("")
+        shunt_inp.setFixedWidth(50)
+        shunt_inp.setEnabled(False)
+        shunt_inp.setStyleSheet(
+            "QLineEdit { background-color: #2a2a2a; border: 1px solid #333333; "
+            "border-radius: 3px; padding: 2px; }"
+        )
+        shunt_lbl = QLabel("Ω")
+        shunt_lbl.setStyleSheet("color: #555555; font-size: 11px;")
+        shunt_inner.addWidget(shunt_inp)
+        shunt_inner.addWidget(shunt_lbl)
+        shunt_inner.addStretch()
+        shunt_spacer.setVisible(False)
+        sp = shunt_spacer.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)
+        shunt_spacer.setSizePolicy(sp)
+        layout.addWidget(shunt_spacer)
+
+        layout.addStretch()
+
+    def _on_toggle(self):
+        self._math_active = self._btn.isChecked()
+        self._update_button_style()
+        self._vdiv_knob.setEnabled(self._math_active)
+        self._offset_knob.setEnabled(self._math_active)
+        self.math_toggled.emit(self._math_active)
+
+    def _update_button_style(self):
+        if self._math_active:
+            self._btn.setStyleSheet(
+                f"QPushButton {{ background-color: {MATH_COLOR}; "
+                f"color: black; font-weight: bold; "
+                f"border: 2px solid {MATH_COLOR}; border-radius: 6px; }}"
+                f"QPushButton:hover {{ border: 3px solid white; }}"
+            )
+        else:
+            self._btn.setStyleSheet(
+                f"QPushButton {{ background-color: #2a2a2a; "
+                f"color: {MATH_COLOR}; font-weight: bold; "
+                f"border: 2px solid #444444; border-radius: 6px; }}"
+                f"QPushButton:hover {{ border-color: {MATH_COLOR}; }}"
+            )
+
+    def _on_vdiv_changed(self, value: float):
+        self._vdiv = value
+        self.vdiv_changed.emit(value)
+
+    def _on_offset_changed(self, value: float):
+        self._offset = value
+        self.offset_changed.emit(value)
+
+    def set_controls_enabled(self, enabled: bool):
+        """Enable/disable math (called from math panel toggle or session restore)."""
+        self._math_active = enabled
+        self._btn.blockSignals(True)
+        self._btn.setChecked(enabled)
+        self._btn.blockSignals(False)
+        self._update_button_style()
+        self._vdiv_knob.setEnabled(enabled)
+        self._offset_knob.setEnabled(enabled)
+
+    @property
+    def vdiv(self) -> float:
+        return self._vdiv
+
+    @property
+    def offset(self) -> float:
+        return self._offset
+
+    def set_vdiv(self, vdiv: float):
+        self._vdiv_knob.set_value(vdiv)
+        self._vdiv = self._vdiv_knob.value
+
+    def set_offset(self, offset: float):
+        self._offset = offset
+        self._offset_knob.set_value(offset)
+
+    def update_vdiv_range(self, max_needed: float):
+        """Update V/div continuous range so it covers at least max_needed.
+
+        Preserves the current knob value (clamped to new range).
+        Step size adapts to the range magnitude.
+        """
+        max_val = max(max_needed, 10.0)  # At least standard scope range
+        step = max(0.001, max_val / 1000.0)
+        current = max(0.001, min(self._vdiv, max_val))
+        self._vdiv_knob.set_range(0.001, max_val, step, current)
+
+    def update_offset_range(self, max_vdiv: float):
+        """Update offset knob range so it can reach the full display range.
+
+        The display shows ±4 divisions, so offset must reach ±(4 * max_vdiv).
+        """
+        max_offset = 4.0 * max_vdiv
+        # Pick a reasonable step: ~1/100 of range, but at least 0.001
+        step = max(0.001, max_offset / 100.0)
+        current = self._offset
+        # Clamp current value to new range
+        current = max(-max_offset, min(max_offset, current))
+        self._offset_knob.set_range(-max_offset, max_offset, step, current)
+
+
 class ChannelPanel(QGroupBox):
     """Vertical controls — Keysight-style per-channel columns.
 
@@ -375,6 +631,7 @@ class ChannelPanel(QGroupBox):
         coupling_changed(int, str) — coupling changed for channel
         bwlimit_changed(int, bool) — BW limit changed for channel
         probe_changed(int, float) — probe factor changed for channel
+        math_toggled(bool) — math enabled/disabled via M button
     """
 
     channel_selected = Signal(int)
@@ -385,6 +642,8 @@ class ChannelPanel(QGroupBox):
     bwlimit_changed = Signal(int, bool)
     probe_changed = Signal(int, float)
     current_mode_changed = Signal(int, bool, float)  # ch, active, shunt_R
+    invert_changed = Signal(int, bool)               # ch, inverted
+    math_toggled = Signal(bool)                      # math on/off via M button
 
     def __init__(self, num_channels: int = NUM_CHANNELS, parent=None):
         super().__init__("VERTICAL", parent)
@@ -416,6 +675,7 @@ class ChannelPanel(QGroupBox):
             col.coupling_changed.connect(self._on_coupling_changed)
             col.probe_changed.connect(self._on_probe_changed)
             col.current_mode_changed.connect(self._on_current_mode_changed)
+            col.invert_changed.connect(self._on_invert_changed)
 
             self._columns[ch] = col
             layout.addWidget(col)
@@ -426,6 +686,22 @@ class ChannelPanel(QGroupBox):
                 sep.setFrameShape(QFrame.Shape.VLine)
                 sep.setStyleSheet("color: #333333;")
                 layout.addWidget(sep)
+
+        # Math column — always visible, disabled until math is turned on
+        math_sep = QFrame()
+        math_sep.setFrameShape(QFrame.Shape.VLine)
+        math_sep.setStyleSheet("color: #333333;")
+        layout.addWidget(math_sep)
+
+        self._math_col = MathColumn()
+        self._math_col.vdiv_changed.connect(
+            lambda v: self.vdiv_changed.emit(MATH_CH, v)
+        )
+        self._math_col.offset_changed.connect(
+            lambda v: self.offset_changed.emit(MATH_CH, v)
+        )
+        self._math_col.math_toggled.connect(self._on_math_button_toggled)
+        layout.addWidget(self._math_col)
 
     def _on_channel_toggled(self, ch: int, enabled: bool):
         self._states[ch].enabled = enabled
@@ -452,6 +728,23 @@ class ChannelPanel(QGroupBox):
         self._states[ch].shunt_resistance = shunt_r
         self.current_mode_changed.emit(ch, active, shunt_r)
 
+    def _on_invert_changed(self, ch: int, inverted: bool):
+        self._states[ch].inverted = inverted
+        self.invert_changed.emit(ch, inverted)
+
+    def _on_math_button_toggled(self, enabled: bool):
+        self.math_toggled.emit(enabled)
+
+    # --- Math column API ---
+
+    @property
+    def math_column(self) -> MathColumn:
+        return self._math_col
+
+    def set_math_enabled(self, enabled: bool):
+        """Enable/disable math column controls."""
+        self._math_col.set_controls_enabled(enabled)
+
     # --- Public API ---
 
     def get_state(self, ch: int) -> ChannelState:
@@ -465,7 +758,8 @@ class ChannelPanel(QGroupBox):
                           coupling: str = None, bw_limit: bool = None,
                           probe_factor: float = None,
                           current_mode: bool = None,
-                          shunt_resistance: float = None):
+                          shunt_resistance: float = None,
+                          inverted: bool = None):
         """Set channel state programmatically (e.g., from init or session load)."""
         state = self._states[ch]
         col = self._columns.get(ch)
@@ -500,3 +794,7 @@ class ChannelPanel(QGroupBox):
                 col.set_current_mode(current_mode, shunt)
         elif shunt_resistance is not None:
             state.shunt_resistance = shunt_resistance
+        if inverted is not None:
+            state.inverted = inverted
+            if col:
+                col.set_inverted(inverted)
