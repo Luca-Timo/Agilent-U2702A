@@ -760,6 +760,38 @@ class WaveformWidget(pg.PlotWidget):
             self._cursor_channel = channel
         self._update_cursor_positions()
 
+    def set_time_cursors(self, values: list[float], placed: bool | None = None):
+        """Bulk-set both time cursor positions (used by session restore).
+
+        Args:
+            values: Two-element list [t1, t2] in seconds.
+            placed: If provided, overrides the placed flag. If None,
+                the flag is set True only when ``values`` is non-default.
+        """
+        if len(values) != 2:
+            raise ValueError(f"Expected 2 time cursor values, got {len(values)}")
+        self._time_cursors = [float(values[0]), float(values[1])]
+        if placed is None:
+            placed = values != [0.0, 0.0]
+        self._time_cursors_placed = bool(placed)
+        for i in range(2):
+            if self._time_cursor_lines[i] is not None:
+                self._time_cursor_lines[i].setPos(self._time_cursors[i])
+        self._update_cursor_positions()
+
+    def set_volt_cursors(self, values: list[float], placed: bool | None = None):
+        """Bulk-set both voltage cursor positions (used by session restore)."""
+        if len(values) != 2:
+            raise ValueError(f"Expected 2 voltage cursor values, got {len(values)}")
+        self._volt_cursors = [float(values[0]), float(values[1])]
+        if placed is None:
+            placed = values != [0.0, 0.0]
+        self._volt_cursors_placed = bool(placed)
+        for i in range(2):
+            if self._volt_cursor_lines[i] is not None:
+                self._volt_cursor_lines[i].setPos(self._volt_cursors[i])
+        self._update_cursor_positions()
+
     def reset_cursor_positions(self):
         """Reset cursors to ±25% of the visible range (default positions)."""
         h_half = (self.NUM_H_DIVS / 2) * self._t_per_div

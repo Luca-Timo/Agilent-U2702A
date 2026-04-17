@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 SESSION_VERSION = "0.9.0"
 
+
+def _knob_scroll_enabled() -> bool:
+    """Read the app-wide knob scroll setting (via the AppSettings singleton)."""
+    from gui.app_settings import SETTINGS
+    return SETTINGS.knob_scroll_enabled
+
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
 AUTO_SAVE_PATH = CONFIG_DIR / "last_session.json"
@@ -85,7 +91,6 @@ def gather_state(win) -> dict:
         dict matching the session file schema.
     """
     from gui.theme import NUM_CHANNELS
-    from gui.knob_widget import RotaryKnob
 
     # --- Channels ---
     channels = {}
@@ -135,7 +140,7 @@ def gather_state(win) -> dict:
         "dmm_hold": win._hold_active,
         "dmm_relative": win._rel_active,
         "dmm_range_locked": win._range_locked,
-        "knob_scroll": RotaryKnob._scroll_enabled,
+        "knob_scroll": _knob_scroll_enabled(),
         "averaging_count": win._utility_panel.averaging_count,
         "split_view": win._container.mode == "split",
         "fft_enabled": win._fft_enabled,
@@ -328,13 +333,11 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
     volt_vals = cur.get("volt", [0.0, 0.0])
     cursor_ch = cur.get("channel", 1)
 
-    # Set positions before enabling mode (bypasses first-activation defaults)
-    win._waveform._time_cursors = list(time_vals)
-    win._waveform._volt_cursors = list(volt_vals)
-    if time_vals != [0.0, 0.0]:
-        win._waveform._time_cursors_placed = True
-    if volt_vals != [0.0, 0.0]:
-        win._waveform._volt_cursors_placed = True
+    # Set positions before enabling mode (bypasses first-activation defaults).
+    # Use public setters — direct private-field access between widgets is
+    # a historical bug source in this codebase.
+    win._waveform.set_time_cursors(list(time_vals))
+    win._waveform.set_volt_cursors(list(volt_vals))
 
     win._time_cursors = {1: time_vals[0], 2: time_vals[1]}
     win._volt_cursors = {1: volt_vals[0], 2: volt_vals[1]}

@@ -79,13 +79,16 @@ class RotaryKnob(QWidget):
     ARC_START_ANGLE = 225    # degrees (bottom-left)
     ARC_SPAN = -270          # degrees (clockwise)
 
-    # Class-level setting: when False, scroll wheel on knobs is ignored
-    _scroll_enabled: bool = False
-
     @classmethod
     def set_scroll_enabled(cls, enabled: bool):
-        """Enable or disable scroll-wheel adjustment on all knobs."""
-        cls._scroll_enabled = enabled
+        """Enable or disable scroll-wheel adjustment on all knobs.
+
+        Stored on the app-wide ``SETTINGS`` singleton so all knob
+        instances — across dialogs, controllers, tests — see the same
+        value without relying on class-attribute mutation.
+        """
+        from gui.app_settings import SETTINGS
+        SETTINGS.knob_scroll_enabled = bool(enabled)
 
     def __init__(self, label: str = "", parent=None):
         super().__init__(parent)
@@ -372,7 +375,8 @@ class RotaryKnob(QWidget):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        if not self._scroll_enabled:
+        from gui.app_settings import SETTINGS
+        if not SETTINGS.knob_scroll_enabled:
             event.ignore()
             return
         delta = event.angleDelta().y()

@@ -1965,19 +1965,23 @@ class MainWindow(QMainWindow):
 
     # --- DMM auto-range ---
 
+    # Frames between DMM auto-range checks (per channel).
+    DMM_AUTORANGE_INTERVAL = 10
+
     def _dmm_autorange(self, waveform: WaveformData):
         """Auto-adjust V/div in DMM mode to keep signal well-framed.
 
-        Throttled: only checks every 10 frames per channel.
-        Adjusts when signal uses < 25% or > 90% of the current range.
+        Throttled: only checks every ``DMM_AUTORANGE_INTERVAL`` frames per
+        channel. Adjusts when signal uses < 25% or > 90% of the current range.
         """
         if self._range_locked:
             return
         ch = waveform.channel
-        count = self._dmm_ar_counter.get(ch, 0) + 1
+        # Counter wraps at the interval so it stays bounded over long runs.
+        count = (self._dmm_ar_counter.get(ch, 0) + 1) % self.DMM_AUTORANGE_INTERVAL
         self._dmm_ar_counter[ch] = count
 
-        if count % 10 != 0:
+        if count != 0:
             return
 
         signal_vpp = measurements.vpp(waveform.voltage)
