@@ -489,32 +489,36 @@ class MainWindow(QMainWindow):
         # Main splitter: waveform | controls
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # --- Left side: waveform + measurements ---
+        # --- Layout factory drives the widget composition ---
+        # Panels are built by a pluggable LayoutFactory (see
+        # gui/layouts/). Attrs ("_container", "_channel_panel", …)
+        # are assigned on self so every existing slot handler keeps
+        # working unchanged. Swapping to a DMMLayout / FuncGenLayout
+        # later means only this factory instance changes — MainWindow
+        # stays the same shell.
+        from gui.layouts import OscilloscopeLayout
+        self._layout = OscilloscopeLayout(num_channels=NUM_CHANNELS)
+
+        # --- Left side: display widgets from the layout ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
-        # Waveform display (container wraps WaveformWidget + split panes)
-        self._container = WaveformContainer(num_channels=NUM_CHANNELS)
-        self._container.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                       QSizePolicy.Policy.Expanding)
-        self._waveform = self._container  # alias for backward compat
-        left_layout.addWidget(self._container, stretch=1)
+        for spec in self._layout.display_widgets():
+            setattr(self, spec.attr, spec.widget)
+            if spec.attr == "_container":
+                # Primary display always stretches to fill.
+                spec.widget.setSizePolicy(
+                    QSizePolicy.Policy.Expanding,
+                    QSizePolicy.Policy.Expanding,
+                )
+            if spec.hidden:
+                spec.widget.setVisible(False)
+            left_layout.addWidget(spec.widget, stretch=spec.stretch)
 
-        # DMM display (hidden until DMM mode activated)
-        self._dmm_widget = DMMWidget(num_channels=NUM_CHANNELS)
-        self._dmm_widget.setVisible(False)
-        left_layout.addWidget(self._dmm_widget, stretch=1)
-
-        # Cursor readout (between waveform and measurement bar)
-        self._cursor_readout = CursorReadout()
-        self._cursor_readout.setVisible(False)  # Hidden until cursors enabled
-        left_layout.addWidget(self._cursor_readout)
-
-        # Measurement bar
-        self._measurement_bar = MeasurementBar(num_channels=NUM_CHANNELS)
-        left_layout.addWidget(self._measurement_bar)
+        # Alias kept for backward compatibility with older call sites.
+        self._waveform = self._container
 
         splitter.addWidget(left_widget)
 
@@ -533,36 +537,17 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(4, 0, 4, 0)
         right_layout.setSpacing(6)
 
-        # Right panel layout order (top to bottom):
-        # 0. Utility (Autoscale, measurements toggle, placeholders)
-        self._utility_panel = UtilityPanel()
-        self._utility_panel.set_autoscale_enabled(False)
-        right_layout.addWidget(self._utility_panel)
+        for spec in self._layout.control_panels():
+            setattr(self, spec.attr, spec.widget)
+            if spec.hidden:
+                spec.widget.setVisible(False)
+            right_layout.addWidget(spec.widget, stretch=spec.stretch)
 
-        # 1. Horizontal (T/div + Position knobs side by side)
-        self._timebase_panel = TimebasePanel()
-        right_layout.addWidget(self._timebase_panel)
-
-        # 2. Trigger (Level knob + dropdowns)
-        self._trigger_panel = TriggerPanel(num_channels=NUM_CHANNELS)
-        right_layout.addWidget(self._trigger_panel)
-
-        # 3. Vertical — per-channel columns (like Keysight 1/2/3/4 buttons)
-        self._channel_panel = ChannelPanel(num_channels=NUM_CHANNELS)
-        right_layout.addWidget(self._channel_panel)
-
-        # 4. FFT controls
-        from gui.fft_panel import FFTPanel
-        self._fft_panel = FFTPanel()
-        right_layout.addWidget(self._fft_panel)
-
-        # 5. Math controls
-        from gui.math_panel import MathPanel
-        self._math_panel = MathPanel()
-        right_layout.addWidget(self._math_panel)
-
-        # Scope-only panels — hidden during DMM mode
-        self._scope_panels = [self._timebase_panel, self._trigger_panel]
+        # Scope-only panels — hidden during DMM mode. Resolved via the
+        # layout so non-scope layouts can return an empty tuple.
+        self._scope_panels = [
+            getattr(self, attr) for attr in self._layout.scope_only_attrs()
+        ]
 
         right_layout.addStretch()
         right_scroll.setWidget(right_widget)
