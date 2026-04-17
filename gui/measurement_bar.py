@@ -317,6 +317,14 @@ class MeasurementBar(QWidget):
         self._channel_visible[channel] = visible
         self._apply_row_visibility()
 
+    def is_channel_visible(self, channel: int) -> bool:
+        """Return True if the given channel's measurement row is currently shown.
+
+        Callers use this to skip expensive measurement computation when the
+        row is hidden (for example, math measurements when math is off).
+        """
+        return self._channel_visible.get(channel, False)
+
     def eventFilter(self, obj, event):
         """Detect hover enter/leave and clicks on measurement value labels."""
         if event.type() == QEvent.Type.Enter:

@@ -1627,8 +1627,11 @@ class MainWindow(QMainWindow):
         if ch_state.current_mode and ch_state.shunt_resistance > 0:
             meas_voltage = meas_voltage / ch_state.shunt_resistance
 
-        meas = measurements.compute_all(meas_voltage, waveform.time_axis)
-        self._measurement_bar.update_measurements(ch, meas)
+        # Only run compute_all when the measurement row is actually shown
+        # or another subsystem (FFT source selector) may read it.
+        if self._measurement_bar.is_channel_visible(ch):
+            meas = measurements.compute_all(meas_voltage, waveform.time_axis)
+            self._measurement_bar.update_measurements(ch, meas)
 
         # FFT — compute if enabled and this is the source channel
         if self._fft_enabled and ch == self._fft_source:
@@ -1653,9 +1656,12 @@ class MainWindow(QMainWindow):
                                  "mul": "CH1×CH2", "div": "CH1÷CH2"}
                     self._container.update_math(
                         time_ax, result, op_labels.get(self._math_op, "Math"))
-                    # Compute math measurements
-                    math_meas = measurements.compute_all(result, time_ax)
-                    self._measurement_bar.update_measurements(MATH_CH, math_meas)
+                    # Compute math measurements only when the math row
+                    # is actually visible — measurements.compute_all()
+                    # is one of the heavier per-frame operations.
+                    if self._measurement_bar.is_channel_visible(MATH_CH):
+                        math_meas = measurements.compute_all(result, time_ax)
+                        self._measurement_bar.update_measurements(MATH_CH, math_meas)
 
     def _recompute_channel_measurements(self, ch: int):
         """Recompute measurements for a channel using cached waveform data.
