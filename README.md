@@ -2,7 +2,7 @@
 
 A macOS desktop application for the Agilent U2702A USB oscilloscope, built with PySide6 and PyQtGraph. Uses an ESP32-S3 as a USB bridge to bypass Apple Silicon USB driver limitations.
 
-## Current Version: 0.9.0-alpha
+## Current Version: 0.10.0-alpha
 
 ### Features
 - Real-time dual-channel waveform display with dark theme
@@ -102,12 +102,84 @@ The ESP32-S3-DevKitC-1 has two separate USB connectors with independent power ra
 pip install PySide6 pyqtgraph pyserial numpy
 ```
 
-### Run
+### Run from source
 ```bash
 python3 gui/main.py
 ```
 
 The connection dialog opens automatically. Select the CP2102N serial port and click Connect.
+
+### Run the standalone app (no Python install required)
+
+Download the latest artifact for your OS from the
+[**Actions** tab](../../actions/workflows/build.yml) → most recent green
+`build` run → *Artifacts* section. Tagged releases (`v*`) also publish
+a GitHub Release with the same bundles.
+
+| OS | Artifact | Run it |
+|---|---|---|
+| macOS (Apple Silicon) | `LabBench-macos-arm64.zip` | unzip, `open LabBench.app` |
+| Windows x64 | `LabBench-windows-x64.zip` | unzip, double-click `LabBench.exe` |
+| Linux x64 | `LabBench-linux-x64.tar.gz` | `tar -xzf …`, run `LabBench/LabBench` |
+
+### Build the app locally
+
+```bash
+pip install -r requirements-build.txt
+python scripts/build_app.py --clean --tests
+```
+
+Output lands in `dist/`:
+- macOS: `dist/LabBench.app` (also a raw `dist/LabBench` binary)
+- Windows: `dist/LabBench/LabBench.exe`
+- Linux: `dist/LabBench/LabBench`
+
+Flags: `--onefile` produces a single-file executable instead of a
+bundle; `--clean` wipes `build/` and `dist/` first; `--tests` runs
+the headless test suite and fails the build if anything breaks.
+
+### Run headless scripts (automation)
+
+The same driver objects the GUI uses are reachable from a plain
+Python script with no Qt loaded:
+
+```python
+from automation import LabSession
+with LabSession() as lab:
+    scope = lab.open("U2702A", demo=True)      # or port="/dev/cu.usbserial-…"
+    scope.apply_setting("channel.1.vdiv", 0.5)
+    scope.apply_setting("trigger.level", 1.0)
+    result = scope.acquire()
+    print(result.waveforms[0].measurements["vpp"])
+```
+
+## Continuous integration
+
+Two GitHub Actions workflows live under `.github/workflows/`:
+
+- **`tests.yml`** — runs the headless test suite on every PR to `main`
+  and every push to `main`. Matrix covers Python 3.11 and 3.12.
+- **`build.yml`** — on every push to `main` (and on `v*` tags) builds
+  the standalone app for macOS arm64, Windows x64, and Linux x64 in
+  parallel, uploads the bundles as workflow artifacts, and on tag
+  pushes publishes a GitHub Release with the three archives attached.
+
+### Enforcing tests on main
+
+CI runs automatically, but *blocking merges on red CI* is a repo
+setting that has to be clicked in GitHub:
+
+1. Repo → **Settings → Branches**
+2. Add a branch protection rule for `main`
+3. Enable **Require a pull request before merging**
+4. Enable **Require status checks to pass before merging** and select
+   the `tests` job (both matrix entries) as required
+5. Optional but recommended: **Require branches to be up to date**
+   before merging
+
+No code change can enforce this — only a repo admin in the Settings
+tab. The workflow runs either way; protection just prevents merging
+a failing branch.
 
 ## Project Structure
 

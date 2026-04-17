@@ -1,0 +1,8 @@
+# Build-time dependencies — used by scripts/build_app.py and CI.
+# Runtime deps live in requirements.txt.
+
+-r requirements.txt
+
+# PyInstaller packs the app into a standalone executable. 6.x supports
+# Python 3.11/3.12 and both Apple Silicon and x86_64 on macOS.
+pyinstaller>=6.4
