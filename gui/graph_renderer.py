@@ -10,9 +10,9 @@ not part of ``processing/`` (which is Qt-free).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 from PySide6.QtCore import Qt, QMarginsF, QPoint
 from PySide6.QtGui import (
     QColor, QFont, QImage, QPainter, QPen, QPageLayout, QPageSize,
@@ -22,7 +22,7 @@ from PySide6.QtGui import (
 from config import SCOPE
 from gui.theme import (
     format_si, format_voltage, format_time, format_frequency, format_percent,
-    format_current, format_adiv,
+    format_current,
 )
 from processing.waveform import WaveformData
 
