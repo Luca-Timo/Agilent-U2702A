@@ -53,15 +53,18 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install Linux-only Qt runtime libs
+      - name: Install Linux-only build + Qt runtime libs
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # Qt platform libraries (so the offscreen test runner and
+          # the packaged bundle both work)
           sudo apt-get install -y \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-sync1 \
             libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 \
-            libegl1 libgl1 libglib2.0-0 libdbus-1-3
+            libegl1 libgl1 libglib2.0-0 libdbus-1-3 \
+            binutils patchelf
 
       - name: Install Python dependencies
         run: |
@@ -78,20 +81,32 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python scripts/build_app.py --clean
 
+      - name: Verify build output
+        shell: bash
+        run: |
+          echo "--- dist/ ---"
+          ls -la dist/ || true
+          echo "--- dist/LabBench/ (if present) ---"
+          ls -la dist/LabBench/ 2>/dev/null | head -20 || true
+
       - name: Package macOS .app into .zip
         if: runner.os == 'macOS'
+        shell: bash
         run: |
           cd dist
           zip -r LabBench-macos-arm64.zip LabBench.app
 
       - name: Package Windows bundle into .zip
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          cd dist
-          Compress-Archive -Path LabBench -DestinationPath LabBench-windows-x64.zip
+          Compress-Archive `
+            -Path "${{ github.workspace }}\dist\LabBench" `
+            -DestinationPath "${{ github.workspace }}\dist\LabBench-windows-x64.zip"
 
       - name: Package Linux bundle into .tar.gz
         if: runner.os == 'Linux'
+        shell: bash
         run: |
           cd dist
           tar -czf LabBench-linux-x64.tar.gz LabBench

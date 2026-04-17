@@ -28,35 +28,25 @@ ONEFILE = os.environ.get("ONEFILE", "0") == "1"
 APP_NAME = "LabBench"
 ENTRY_POINT = str(SPEC_DIR / "gui" / "main.py")
 
-# PySide6 + PyQtGraph + pyvisa-py have submodules PyInstaller's
-# auto-discovery misses in some Python versions. List them explicitly.
+# Hidden imports PyInstaller's auto-discovery can miss. Keep this list
+# SMALL — every entry forces Analysis to follow extra dependency trees.
+# In particular do NOT list ``pyvisa``: it's only imported by
+# ``instrument/connection.py`` (a dev-only fallback, never reached from
+# gui/main.py) and its pyvisa-py backends have platform-specific
+# dynamic imports that trip PyInstaller on Linux / Windows.
 hidden_imports = [
-    "PySide6.QtCore",
-    "PySide6.QtGui",
-    "PySide6.QtWidgets",
-    "PySide6.QtPrintSupport",   # QPdfWriter in gui/graph_renderer.py
+    "PySide6.QtPrintSupport",    # QPdfWriter in gui/graph_renderer.py
     "pyqtgraph",
-    "pyqtgraph.Qt",
-    "numpy",
-    "serial",
     "serial.tools.list_ports",
-    # pyvisa-py isn't used on the ESP32 serial path but the import
-    # lives in instrument/connection.py (fallback for direct-USB mode)
-    # and PyInstaller will warn if it's missing. Safe to include.
-    "pyvisa",
 ]
 
-# Data files we need inside the bundle.
+# ``datas`` stays empty. Analysis walks imports from gui/main.py and
+# bundles every pure-Python module it reaches into the PYZ archive —
+# no need to copy .py files as data. Earlier revisions of this spec
+# duplicated every module into ``datas`` which silently worked on
+# macOS but caused cross-platform path / duplicate-file issues on
+# the CI Linux and Windows runners.
 datas = []
-# Ship presets + config; they're Python so auto-discovery finds them
-# anyway, but this makes it explicit so nothing slips through on a
-# bad cache.
-for pkg in ("config", "instrument", "processing", "gui", "automation"):
-    pkg_dir = SPEC_DIR / pkg
-    if pkg_dir.exists():
-        for py in pkg_dir.rglob("*.py"):
-            rel = py.relative_to(SPEC_DIR)
-            datas.append((str(py), str(rel.parent)))
 
 
 a = Analysis(
@@ -69,8 +59,14 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Things PySide6's auto-import pulls in that we never use —
-        # trimming keeps the bundle size down.
+        # Never reached from gui/main.py — excluding keeps the bundle
+        # smaller AND avoids Analysis trying to resolve their deps.
+        # pyvisa / pyvisa-py / pyusb are only in the dev-only direct-USB
+        # path (instrument/connection.py, used by test_connection.py).
+        "pyvisa",
+        "pyvisa_py",
+        "usb",
+        # PySide6 modules we don't use.
         "PySide6.QtMultimedia",
         "PySide6.QtQuick",
         "PySide6.QtWebEngineCore",
