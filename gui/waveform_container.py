@@ -6,13 +6,19 @@ Two modes:
   - "split": separate plot pane per enabled channel, stacked vertically
 
 The container forwards all WaveformWidget signals and public methods.
-In split mode, extra panes for FFT and math are available.
+
+The FFT pane lives at the container level (above this file's two display
+widgets), so it's available in both modes. The user can resize the
+divider between the waveform area and the FFT pane via the QSplitter.
 """
 
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout
+from PySide6.QtGui import QPen
+from PySide6.QtWidgets import (
+    QStackedWidget, QSplitter, QVBoxLayout, QWidget,
+)
 
 from gui.theme import (
     BG_PLOT, GRID_COLOR, TEXT_DIM, NUM_CHANNELS, channel_color,
@@ -541,7 +547,12 @@ class SplitPaneManager:
         self._update_gnd_positions()
         self._update_trigger_overlay_pos()
 
-    # --- FFT pane ---
+    # --- FFT pane (superseded) ---
+    # These methods used to host the FFT trace inside the split
+    # GraphicsLayoutWidget. The FFT pane now lives at the
+    # ``WaveformContainer`` level so it's available in both combined
+    # and split modes — kept here only so ``_fft_requested`` state
+    # doesn't crash callers; nothing invokes them today.
 
     def add_fft_pane(self):
         """Add an FFT pane at the bottom of the split layout."""
@@ -682,12 +693,29 @@ class WaveformContainer(QWidget):
         # Math uses virtual channel MATH_CH on the WaveformWidget
         self._math_enabled = False
 
-        # Layout — stacked so we can switch between combined/split
-        self._stack = QStackedLayout(self)
-        self._stack.setContentsMargins(0, 0, 0, 0)
+        # -- Layout ------------------------------------------------
+        # Top: a QStackedWidget that switches between combined view
+        # (WaveformWidget) and split view (SplitPaneManager's
+        # GraphicsLayoutWidget).
+        # Bottom: an optional FFT plot that's visible when
+        # add_fft_pane() has been called. Both panes live in a
+        # vertical QSplitter so the user can resize the divider.
+        self._stack = QStackedWidget(self)
         self._stack.addWidget(self._waveform)        # index 0
-        self._stack.addWidget(self._split.widget)     # index 1
+        self._stack.addWidget(self._split.widget)    # index 1
         self._stack.setCurrentIndex(0)
+
+        self._fft_widget: pg.PlotWidget | None = None  # created lazily
+        self._fft_scale: str = "dbv"
+
+        self._vsplit = QSplitter(Qt.Orientation.Vertical, self)
+        self._vsplit.setChildrenCollapsible(False)
+        self._vsplit.addWidget(self._stack)
+        # FFT widget is inserted into _vsplit on demand.
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.addWidget(self._vsplit)
 
     @property
     def mode(self) -> str:
@@ -835,20 +863,60 @@ class WaveformContainer(QWidget):
         self._waveform.clear_all()
         self._split.clear_all()
 
-    # --- FFT (split-mode only — needs independent frequency X-axis) ---
+    # --- FFT pane (container-level — works in combined AND split mode) ---
 
     def update_fft(self, freq: np.ndarray, magnitude: np.ndarray, scale: str = "dbv"):
-        self._split.update_fft(freq, magnitude, scale)
+        """Push a new frequency-domain trace to the FFT pane.
+
+        No-op if the pane isn't currently shown — callers can safely
+        invoke this every frame; ``add_fft_pane()`` controls visibility.
+        """
+        self._fft_scale = scale
+        if self._fft_widget is None:
+            return
+        trace = getattr(self._fft_widget, "_fft_trace", None)
+        if trace is None:
+            return
+        trace.setData(freq, magnitude)
+        label = "dBV" if scale == "dbv" else "linear"
+        self._fft_widget.setLabel(
+            "left", f"FFT ({label})", color="#aaaaaa",
+        )
 
     def add_fft_pane(self):
-        self._split.add_fft_pane()
-        if self._mode == "split":
-            self._split.rebuild()
+        """Reveal the FFT pane (creating it on first call)."""
+        if self._fft_widget is None:
+            self._fft_widget = self._build_fft_widget()
+            self._vsplit.addWidget(self._fft_widget)
+            # Give the waveform area ~70% and FFT ~30% by default;
+            # user can drag to resize.
+            self._vsplit.setSizes([700, 300])
+            self._vsplit.setStretchFactor(0, 2)
+            self._vsplit.setStretchFactor(1, 1)
+        self._fft_widget.setVisible(True)
 
     def remove_fft_pane(self):
-        self._split.remove_fft_pane()
-        if self._mode == "split":
-            self._split.rebuild()
+        """Hide the FFT pane. Kept alive so re-enabling is instant."""
+        if self._fft_widget is not None:
+            self._fft_widget.setVisible(False)
+
+    def _build_fft_widget(self) -> pg.PlotWidget:
+        """Create the FFT PlotWidget with scope-matching styling."""
+        w = pg.PlotWidget(parent=self)
+        w.setBackground(BG_PLOT)
+        w.getAxis("bottom").setPen(pg.mkPen(GRID_COLOR))
+        w.getAxis("left").setPen(pg.mkPen(GRID_COLOR))
+        w.getAxis("bottom").setTextPen(pg.mkPen(TEXT_DIM))
+        w.getAxis("left").setTextPen(pg.mkPen(TEXT_DIM))
+        w.setLabel("bottom", "Frequency (Hz)", color="#aaaaaa")
+        w.setLabel("left", "FFT", color="#aaaaaa")
+        w.showGrid(x=True, y=True, alpha=0.2)
+        w.setMouseEnabled(x=True, y=False)
+        w.setMenuEnabled(False)
+        # Stash the trace on the widget itself so update_fft can find it.
+        w._fft_trace = w.plot(pen=QPen(pg.mkColor("#ffffff"), 1))
+        w.setMinimumHeight(120)
+        return w
 
     # --- Math (virtual channel MATH_CH on WaveformWidget) ---
 
