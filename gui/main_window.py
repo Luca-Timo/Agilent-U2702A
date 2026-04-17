@@ -192,12 +192,23 @@ class MainWindow(QMainWindow):
     sig_set_trigger_coupling = Signal(str)
     sig_set_channel_enabled = Signal(int, bool)
 
-    def __init__(self):
+    def __init__(self, preopened_bridge=None):
+        """Build the scope window.
+
+        Args:
+            preopened_bridge: Optional already-open ``Bridge`` (from the
+                LauncherWindow). When provided the window skips its own
+                connection dialog and the auto-restore-then-connect
+                flow — the launcher is the connection UI. When None
+                (legacy standalone launch) the connection dialog still
+                opens on startup.
+        """
         super().__init__()
         self.setWindowTitle(f"Agilent U2702A Oscilloscope — v{APP_VERSION}")
         self.setMinimumSize(1200, 800)
         self.resize(1440, 900)
 
+        self._preopened_bridge = preopened_bridge
         self._bridge = None
         self._is_running = False
         self._scpi_tester = None
@@ -251,8 +262,17 @@ class MainWindow(QMainWindow):
         # Load QSettings (recent files, last port/baud)
         self._load_qsettings()
 
-        # Auto-restore last session, then show connection dialog
-        QTimer.singleShot(0, self._auto_restore_session)
+        if self._preopened_bridge is not None:
+            # Launcher handed us an already-open bridge: attach it to
+            # the worker, run the init sequence, and skip the
+            # connection dialog. Session restore still runs on the
+            # next event-loop tick so saved channel colours, cursors,
+            # etc. apply as usual.
+            QTimer.singleShot(0, self._attach_preopened_bridge)
+        else:
+            # Legacy standalone launch: restore session then prompt
+            # for a connection.
+            QTimer.singleShot(0, self._auto_restore_session)
 
     def _build_menu_bar(self):
         """Build the menu bar."""
@@ -2369,6 +2389,23 @@ class MainWindow(QMainWindow):
                 apply_state(self, state)
         # Show connection dialog after restore
         self._show_connection_dialog()
+
+    def _attach_preopened_bridge(self):
+        """Use a bridge the launcher already opened — no dialog needed.
+
+        Restores the saved session first (so channel colours, cursors,
+        etc. are in place before data arrives), then reuses
+        ``_on_connected`` so wiring stays in one place.
+        """
+        from gui.session import AUTO_SAVE_PATH, load_from_file, apply_state
+
+        if AUTO_SAVE_PATH.exists():
+            state = load_from_file(str(AUTO_SAVE_PATH))
+            if state:
+                apply_state(self, state)
+
+        bridge = self._preopened_bridge
+        self._on_connected(bridge)
 
     # --- Cleanup ---
 
