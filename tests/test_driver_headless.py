@@ -161,9 +161,50 @@ class DriverContractMixin:
             )
 
 
-# Concrete driver suites are added in phase 2 when the first driver
-# class lands. This file defines the harness so that landing a driver
-# is "add a TestCase with build_driver", nothing more.
+class TestU2702ADriver(DriverContractMixin, unittest.TestCase):
+    """Contract suite for the Agilent U2702A driver."""
+
+    from instrument.drivers.u2702a import U2702ADriver  # noqa: E402
+    driver_class = U2702ADriver
+
+    def build_driver(self):
+        return self.driver_class(DemoBridge())
+
+    def test_acquire_returns_waveforms(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            result = drv.acquire()
+            self.assertGreaterEqual(len(result.waveforms), 1)
+            wf = result.waveforms[0]
+            self.assertEqual(wf.voltage.shape, wf.time_axis.shape)
+        finally:
+            drv.close()
+
+    def test_apply_setting_roundtrip(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            drv.apply_setting("channel.1.vdiv", 0.5)
+            drv.apply_setting("trigger.level", 1.23)
+            drv.apply_setting("timebase.tdiv", 1e-4)
+            self.assertEqual(drv.read_setting("channel.1.vdiv"), 0.5)
+            self.assertAlmostEqual(drv.read_setting("trigger.level"), 1.23)
+            self.assertAlmostEqual(drv.read_setting("timebase.tdiv"), 1e-4)
+        finally:
+            drv.close()
+
+    def test_unknown_setting_raises(self):
+        drv = self.build_driver()
+        with self.assertRaises(KeyError):
+            drv.apply_setting("nonsense.key", 42)
+
+    def test_supported_settings_includes_channel_keys(self):
+        drv = self.build_driver()
+        keys = drv.supported_settings()
+        self.assertIn("channel.1.vdiv", keys)
+        self.assertIn("timebase.tdiv", keys)
+        self.assertIn("trigger.level", keys)
 
 
 if __name__ == "__main__":
