@@ -15,7 +15,14 @@ from config import SCOPE
 
 @dataclass
 class WaveformData:
-    """Processed waveform data for one channel."""
+    """Processed waveform data for one channel.
+
+    Satisfies the ``processing.acquisition_result.AcquisitionResult``
+    protocol — this is the ``kind="waveform"`` case. Other kinds
+    (scalar meter readings, generator setpoints) live in
+    ``processing.acquisition_result`` and are emitted by their
+    respective drivers.
+    """
     channel: int            # 1..N
     raw_adc: np.ndarray     # uint8 array (SCOPE.adc.data_length points)
     voltage: np.ndarray     # float64 voltage array
@@ -26,6 +33,10 @@ class WaveformData:
     probe_factor: float     # Probe attenuation (1 or 10)
     timestamp: float        # time.monotonic() when acquired
     trigger_sample: Optional[int] = None   # Sample index where trigger crossed
+
+    # AcquisitionResult protocol fields
+    kind: str = field(default="waveform", init=False, repr=False)
+    metadata: dict = field(default_factory=dict, repr=False, compare=False)
 
     # Lazily-computed measurement cache (see ``measurements`` property).
     _cached_measurements: Optional[dict] = field(
