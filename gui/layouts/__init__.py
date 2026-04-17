@@ -12,6 +12,7 @@ FunctionGeneratorLayout will join it as those drivers land.
 """
 
 from gui.layouts.base import LayoutFactory, PanelSpec
+from gui.layouts.dmm_layout import DMMLayout
 from gui.layouts.oscilloscope_layout import OscilloscopeLayout
 
-__all__ = ["LayoutFactory", "PanelSpec", "OscilloscopeLayout"]
+__all__ = ["LayoutFactory", "PanelSpec", "OscilloscopeLayout", "DMMLayout"]

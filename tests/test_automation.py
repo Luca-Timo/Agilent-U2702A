@@ -53,6 +53,30 @@ class TestLabSession(unittest.TestCase):
             meas = wf.measurements
             self.assertIn("vpp", meas)
 
+    def test_session_opens_dmm(self):
+        """LabSession picks DemoDMMBridge for DMM-kind configs."""
+        from instrument.demo_dmm_bridge import DemoDMMBridge
+        from processing.acquisition_result import MeterReading
+        with LabSession() as lab:
+            dmm = lab.open("Generic-DMM", demo=True)
+            self.assertIsInstance(dmm.bridge, DemoDMMBridge)
+            reading = dmm.acquire()
+            self.assertIsInstance(reading, MeterReading)
+
+    def test_session_hosts_scope_and_dmm_simultaneously(self):
+        """Prove the lab-bench case: two instruments in one session."""
+        with LabSession() as lab:
+            scope = lab.open("U2702A", demo=True)
+            dmm = lab.open("Generic-DMM", demo=True)
+            self.assertEqual(len(lab.drivers), 2)
+            # Drive both — they must not interfere with each other's state.
+            scope.apply_setting("channel.1.vdiv", 2.0)
+            dmm.apply_setting("mode", "DCV")
+            s_result = scope.acquire()
+            d_reading = dmm.acquire()
+            self.assertGreaterEqual(len(s_result.waveforms), 1)
+            self.assertAlmostEqual(d_reading.primary, 3.3, delta=0.5)
+
 
 class TestActionRecorder(unittest.TestCase):
     def _driver(self):

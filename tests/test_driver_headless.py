@@ -207,5 +207,76 @@ class TestU2702ADriver(DriverContractMixin, unittest.TestCase):
         self.assertIn("trigger.level", keys)
 
 
+class TestGenericDMMDriver(DriverContractMixin, unittest.TestCase):
+    """Contract suite for the Generic SCPI DMM driver."""
+
+    from instrument.drivers.generic_dmm import GenericDMMDriver  # noqa: E402
+    from instrument.demo_dmm_bridge import DemoDMMBridge          # noqa: E402
+    driver_class = GenericDMMDriver
+    _demo_bridge_class = DemoDMMBridge
+
+    def build_driver(self):
+        return self.driver_class(self._demo_bridge_class())
+
+    def test_acquire_returns_meter_reading(self):
+        from processing.acquisition_result import MeterReading
+        drv = self.build_driver()
+        drv.open()
+        try:
+            reading = drv.acquire()
+            self.assertIsInstance(reading, MeterReading)
+            self.assertEqual(reading.kind, "scalar")
+            self.assertEqual(reading.unit, "V")       # default mode is DCV
+            # Nominal 3.3V ± drift/noise; give a wide band.
+            self.assertAlmostEqual(reading.primary, 3.3, delta=0.5)
+        finally:
+            drv.close()
+
+    def test_min_max_avg_track_across_reads(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            for _ in range(5):
+                r = drv.acquire()
+            self.assertEqual(r.samples, 5)
+            self.assertGreaterEqual(r.maximum, r.minimum)
+            self.assertTrue(r.minimum <= r.average <= r.maximum)
+        finally:
+            drv.close()
+
+    def test_mode_switch_resets_stats(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            for _ in range(3):
+                drv.acquire()
+            r_before = drv.acquire()
+            self.assertGreaterEqual(r_before.samples, 4)
+            drv.apply_setting("mode", "ACV")
+            r_after = drv.acquire()
+            self.assertEqual(r_after.samples, 1)
+            self.assertEqual(r_after.unit, "V")
+        finally:
+            drv.close()
+
+    def test_unknown_mode_rejected(self):
+        drv = self.build_driver()
+        with self.assertRaises(KeyError):
+            drv.apply_setting("mode", "NOT_A_REAL_MODE")
+
+    def test_hold_returns_none(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            first = drv.acquire()
+            self.assertIsNotNone(first)
+            drv.apply_setting("hold", True)
+            self.assertIsNone(drv.acquire())
+            drv.apply_setting("hold", False)
+            self.assertIsNotNone(drv.acquire())
+        finally:
+            drv.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
