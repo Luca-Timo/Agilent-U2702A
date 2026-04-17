@@ -327,8 +327,10 @@ class ExportDialog(QDialog):
 # Graph renderer — QPainter on QImage
 # ---------------------------------------------------------------------------
 
-NUM_H_DIVS = 10
-NUM_V_DIVS = 8
+# Grid divisions — sourced from active scope config
+from config import SCOPE
+NUM_H_DIVS = SCOPE.grid.horizontal_divs
+NUM_V_DIVS = SCOPE.grid.vertical_divs
 
 # Margins (fraction of total image size)
 _MARGIN_LEFT = 0.08

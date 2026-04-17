@@ -35,11 +35,13 @@ from typing import Optional, Callable
 import serial
 import serial.tools.list_ports
 
+from config import SCOPE
 
-# --- Constants ---
 
-DEFAULT_BAUDRATE = 2_000_000
-DEFAULT_TIMEOUT_S = 5.0
+# --- Constants (sourced from active scope config) ---
+
+DEFAULT_BAUDRATE = SCOPE.serial.baudrate
+DEFAULT_TIMEOUT_S = SCOPE.serial.timeout_s
 BINARY_MARKER = ord('#')
 
 # Bridge status values
@@ -78,10 +80,11 @@ def list_serial_ports():
         List of (device_path, description) tuples.
     """
     ports = serial.tools.list_ports.comports()
-    # CP2102N: VID 0x10C4, PID 0xEA60
-    cp2102n = [p for p in ports if p.vid == 0x10C4 and p.pid == 0xEA60]
-    others = [p for p in ports if p not in cp2102n]
-    return [(p.device, f"{p.description} [{p.device}]") for p in cp2102n + others]
+    bridge_vid = SCOPE.serial.bridge_vid
+    bridge_pid = SCOPE.serial.bridge_pid
+    preferred = [p for p in ports if p.vid == bridge_vid and p.pid == bridge_pid]
+    others = [p for p in ports if p not in preferred]
+    return [(p.device, f"{p.description} [{p.device}]") for p in preferred + others]
 
 
 # --- Synchronous Bridge Client ---

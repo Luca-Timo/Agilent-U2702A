@@ -30,6 +30,7 @@ from PySide6.QtGui import QFont, QTextCharFormat, QColor, QTextCursor, QAction
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from config import SCOPE
 from instrument.serial_bridge import (
     SerialBridge, list_serial_ports, DEFAULT_BAUDRATE,
     BridgeTimeoutError, BridgeCommandError, BridgeProtocolError,
@@ -214,7 +215,7 @@ class LogWidget(QPlainTextEdit):
         parts = [f"[BINARY] {total} bytes"]
         if total >= 2:
             parts.append(f"prefix: {data[0]:02X} {data[1]:02X}")
-            adc = data[2:2 + 1256]
+            adc = data[SCOPE.adc.data_offset:SCOPE.adc.data_offset + SCOPE.adc.data_length]
             if len(adc) > 0:
                 arr = np.frombuffer(adc, dtype=np.uint8)
                 parts.append(

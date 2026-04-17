@@ -2,44 +2,46 @@
 Demo signal bridge — generates synthetic waveforms for GUI testing.
 
 Duck-types SerialBridge so the entire GUI works without real hardware.
-Produces a 1 kHz 3.3 V 50% PWM signal.
+Generates the test signal configured in ``SCOPE.demo_signal`` (default:
+1 kHz 3.3 V 50% PWM).
 """
 
 import time
+
 import numpy as np
 
-
-# --- Waveform format (must match processing/waveform.py) ---
-ADC_DATA_LENGTH = 1256
-ADC_CENTER = 128
-ADC_RANGE = 256
-NUM_V_DIVS = 8
-NUM_H_DIVS = 10
-PAYLOAD_SIZE = 2514  # 2 prefix + 1256 ADC + 1256 padding
-
-# Demo signal parameters
-PWM_FREQ_HZ = 1000.0       # 1 kHz
-PWM_DUTY = 0.5              # 50%
-PWM_HIGH_V = 3.3            # Volts
-PWM_LOW_V = 0.0             # Volts
-NOISE_COUNTS = 1            # ±1 ADC count noise
+from config import SCOPE
 
 
 class DemoBridge:
-    """Mock bridge that generates synthetic PWM waveforms.
+    """Mock bridge that generates synthetic waveforms.
 
     Implements the same public interface as SerialBridge so the
     acquisition worker and GUI are unaware of the difference.
     """
 
     def __init__(self):
-        # Per-channel state (channels 1 and 2)
-        self._channels = {
-            1: {"v_per_div": 1.0, "offset": 0.0, "enabled": True,
-                "coupling": "DC", "bw_limit": False, "probe": 1.0},
-            2: {"v_per_div": 1.0, "offset": 0.0, "enabled": False,
-                "coupling": "DC", "bw_limit": False, "probe": 1.0},
-        }
+        # Per-channel state: only CH1 enabled by default.
+        self._channels = {}
+        for ch in range(1, SCOPE.num_channels + 1):
+            self._channels[ch] = {
+                "v_per_div": 1.0,
+                "offset": 0.0,
+                "enabled": (ch == 1),
+                "coupling": "DC",
+                "bw_limit": False,
+                "probe": 1.0,
+            }
+
+        # Pre-allocate scratch buffers for waveform generation (hot path).
+        adc_len = SCOPE.adc.data_length
+        self._t_buf = np.empty(adc_len, dtype=np.float64)
+        self._raw_buf = np.empty(adc_len, dtype=np.float64)
+        self._idx = np.arange(adc_len, dtype=np.float64)
+        self._padding = b'\x00' * (
+            SCOPE.adc.payload_size - SCOPE.adc.data_offset - adc_len
+        )
+        self._prefix = b'\x01\x00'
 
         # Timebase
         self._t_per_div = 1e-3
@@ -90,7 +92,7 @@ class DemoBridge:
         cmd = command.strip().upper()
 
         # Channel settings: CHANNEL1:SCALE 0.5
-        for ch in (1, 2):
+        for ch in range(1, SCOPE.num_channels + 1):
             prefix = f"CHANNEL{ch}:"
             if cmd.startswith(prefix):
                 rest = cmd[len(prefix):]
@@ -141,7 +143,7 @@ class DemoBridge:
         cmd = command.strip().upper().rstrip("?")
 
         # Channel queries
-        for ch in (1, 2):
+        for ch in range(1, SCOPE.num_channels + 1):
             prefix = f"CHANNEL{ch}:"
             if cmd.startswith(prefix):
                 key = cmd[len(prefix):]
@@ -163,7 +165,7 @@ class DemoBridge:
         if cmd in ("TIMEBASE:POS", "TIM:POS"):
             return f"{self._position:.6E}"
         if cmd == "TIM:RANG":
-            return f"{self._t_per_div * NUM_H_DIVS:.6E}"
+            return f"{self._t_per_div * SCOPE.grid.horizontal_divs:.6E}"
         if cmd == "TIM:REF":
             return "CENT"
         if cmd == "TIM:MODE":
@@ -193,46 +195,48 @@ class DemoBridge:
         return "0"
 
     def query_binary(self, command: str, timeout: float = None) -> bytes:
-        """Generate synthetic PWM waveform data."""
+        """Generate a synthetic waveform payload for demo mode."""
         # Simulate acquisition delay
         time.sleep(0.020)
+
+        adc = SCOPE.adc
+        grid = SCOPE.grid
+        sig = SCOPE.demo_signal
 
         ch = self._wav_source
         s = self._channels.get(ch, self._channels[1])
         v_per_div = s["v_per_div"]
 
         # Volts per ADC count
-        volts_per_count = (NUM_V_DIVS * v_per_div) / ADC_RANGE
+        volts_per_count = (grid.vertical_divs * v_per_div) / adc.range
 
         # Time per sample
-        total_time = NUM_H_DIVS * self._t_per_div
-        dt = total_time / ADC_DATA_LENGTH
+        dt = (grid.horizontal_divs * self._t_per_div) / adc.data_length
 
-        # Generate PWM: time array for each sample
-        period = 1.0 / PWM_FREQ_HZ
-        t = np.arange(ADC_DATA_LENGTH) * dt
+        # Time array (reuse preallocated index buffer, write into t_buf)
+        np.multiply(self._idx, dt, out=self._t_buf)
 
-        # Phase so signal is continuous across acquisitions
-        phase = (time.monotonic() % period)
-        t_in_cycle = (t + phase) % period
+        # Signal phase continuity across acquisitions
+        period = 1.0 / sig.frequency_hz
+        phase = time.monotonic() % period
+        t_in_cycle = np.mod(self._t_buf + phase, period)
 
-        # PWM: high when in first half of cycle
-        voltage = np.where(
-            t_in_cycle < period * PWM_DUTY,
-            PWM_HIGH_V, PWM_LOW_V,
-        )
+        # PWM: high when in first (duty) fraction of the cycle.
+        # Fill _raw_buf via boolean indexing (no allocation beyond the mask).
+        hi = sig.high_v / volts_per_count + adc.center
+        lo = sig.low_v / volts_per_count + adc.center
+        mask = t_in_cycle < period * sig.duty
+        self._raw_buf[mask] = hi
+        self._raw_buf[~mask] = lo
 
-        # Convert to ADC counts (inverse of adc_to_voltage, without offset)
-        raw = (voltage / volts_per_count) + ADC_CENTER
+        # Add integer noise
+        if sig.noise_counts > 0:
+            self._raw_buf += np.random.randint(
+                -sig.noise_counts, sig.noise_counts + 1, size=adc.data_length,
+            )
 
-        # Add noise
-        raw += np.random.randint(-NOISE_COUNTS, NOISE_COUNTS + 1,
-                                 size=ADC_DATA_LENGTH)
+        # Clamp to uint8 in one pass
+        raw = np.clip(self._raw_buf, 0, adc.range - 1).astype(np.uint8)
 
-        # Clamp to uint8
-        raw = np.clip(raw, 0, 255).astype(np.uint8)
-
-        # Build payload: [2 prefix] [1256 ADC] [1256 padding]
-        prefix = b'\x01\x00'
-        padding = b'\x00' * (PAYLOAD_SIZE - 2 - ADC_DATA_LENGTH)
-        return prefix + raw.tobytes() + padding
+        # Build payload: [prefix] [ADC data] [padding]
+        return self._prefix + raw.tobytes() + self._padding

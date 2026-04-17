@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QDoubleValidator
 
+from config import SCOPE
 from gui.theme import (
     VDIV_VALUES, format_vdiv, format_adiv, format_voltage, format_current,
     channel_color, NUM_CHANNELS, MATH_COLOR, MATH_CH,
@@ -125,7 +126,7 @@ class ChannelColumn(QWidget):
         # Probe dropdown
         prb_layout = QHBoxLayout()
         self._probe_combo = QComboBox()
-        self._probe_combo.addItems(["1x", "10x", "20x", "50x", "100x", "Custom..."])
+        self._probe_combo.addItems([*SCOPE.standard_probes, "Custom..."])
         self._probe_combo.setFixedWidth(75)
         self._probe_combo.currentTextChanged.connect(self._on_probe_changed)
         prb_layout.addStretch()
@@ -239,14 +240,17 @@ class ChannelColumn(QWidget):
         self._current_vdiv = v
         self.vdiv_changed.emit(self._channel, v)
 
-    _STANDARD_PROBES = {"1x", "10x", "20x", "50x", "100x"}
+    @property
+    def _STANDARD_PROBES(self) -> set[str]:
+        return set(SCOPE.standard_probes)
 
     def _on_probe_changed(self, text: str):
         if text == "Custom...":
+            probe_min, probe_max = SCOPE.custom_probe_range
             value, ok = QInputDialog.getDouble(
                 self, "Custom Probe Factor",
                 f"Probe attenuation for CH{self._channel}:",
-                self._probe_factor, 0.001, 10000.0, 3,
+                self._probe_factor, probe_min, probe_max, 3,
             )
             if ok and value > 0:
                 custom_text = f"{value:g}x"

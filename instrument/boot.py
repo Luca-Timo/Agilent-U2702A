@@ -18,6 +18,8 @@ import logging
 import usb.core
 import usb.util
 
+from config import SCOPE
+
 logger = logging.getLogger(__name__)
 
 _MACOS_PERMISSION_HINT = (
@@ -29,12 +31,10 @@ _MACOS_PERMISSION_HINT = (
     "     Set to 'Always Allow', then unplug and re-plug the device."
 )
 
-# Agilent/Keysight vendor ID
-VID_AGILENT = 0x0957
-
-# U2702A product IDs
-PID_BOOT = 0x2818      # Firmware update mode (device powers up here)
-PID_OPERATIONAL = 0x2918  # Normal USBTMC mode (after boot sequence)
+# USB IDs (sourced from active scope config)
+VID_AGILENT = SCOPE.usb.vid
+PID_BOOT = SCOPE.usb.pid_boot            # Firmware-update mode (may be None)
+PID_OPERATIONAL = SCOPE.usb.pid_operational
 
 # Boot sequence: 6 vendor-specific control transfers
 # Transfers 1-5: read firmware info from internal registers (device-to-host)

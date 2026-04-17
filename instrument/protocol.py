@@ -323,8 +323,14 @@ _CHANNEL_QUERIES = [
 ]
 
 
-def build_init_sequence(num_channels: int = 2) -> list[str]:
-    """Build the full init sequence for the given number of channels."""
+def build_init_sequence(num_channels: int | None = None) -> list[str]:
+    """Build the full init sequence for the given number of channels.
+
+    Defaults to ``SCOPE.num_channels`` if not specified.
+    """
+    if num_channels is None:
+        from config import SCOPE
+        num_channels = SCOPE.num_channels
     seq = list(_INIT_PRE_CHANNELS)
     for ch in range(1, num_channels + 1):
         for q in _CHANNEL_QUERIES:
@@ -333,5 +339,5 @@ def build_init_sequence(num_channels: int = 2) -> list[str]:
     return seq
 
 
-# Default sequence (backward compatible)
-INIT_SEQUENCE = build_init_sequence(2)
+# Default sequence — sized from active scope config.
+INIT_SEQUENCE = build_init_sequence()

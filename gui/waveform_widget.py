@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, Signal, QPointF, QRectF, QRect, QPoint
 from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPainter
 from PySide6.QtWidgets import QRubberBand
 
+from config import SCOPE
 from gui.theme import (
     BG_PLOT, GRID_COLOR, TEXT_DIM, ACCENT_BLUE,
     NUM_CHANNELS, channel_color, MATH_CH,
@@ -32,8 +33,11 @@ class WaveformWidget(pg.PlotWidget):
     position indicator.
     """
 
-    NUM_H_DIVS = 10   # Horizontal divisions
-    NUM_V_DIVS = 8    # Vertical divisions
+    # Grid divisions — sourced from active scope config. Kept as class
+    # attributes for backwards compatibility with external callers
+    # (e.g. main_window uses ``WaveformWidget.NUM_V_DIVS``).
+    NUM_H_DIVS = SCOPE.grid.horizontal_divs
+    NUM_V_DIVS = SCOPE.grid.vertical_divs
 
     # Emitted when user finishes a drag-to-zoom rectangle
     # Args: t_min, v_min, t_max, v_max (data coordinates)

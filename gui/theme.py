@@ -2,15 +2,23 @@
 Dark theme and styling for the oscilloscope GUI.
 
 Provides dark Fusion palette, default channel colors, and SI unit formatting.
+
+Hardware-dependent constants (channel count, V/div & T/div tables) are
+re-exported from ``config.SCOPE`` so legacy imports keep working; the
+authoritative source is ``config/scope_config.py``.
 """
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
 
+from config import SCOPE
 
-# --- Number of channels (change this for 4/8-channel scopes) ---
-NUM_CHANNELS = 2
+
+# --- Hardware-dependent re-exports (source of truth: config/scope_config.py) ---
+NUM_CHANNELS = SCOPE.num_channels
+VDIV_VALUES = list(SCOPE.vdiv_values)
+TDIV_VALUES = list(SCOPE.tdiv_values)
 
 # --- Default channel colors (up to 8 channels) ---
 DEFAULT_CHANNEL_COLORS = [
@@ -40,30 +48,6 @@ STATUS_YELLOW = "#ffcc00"
 STATUS_RED = "#ff5555"
 MATH_COLOR = "#ff66ff"     # Magenta — math channel trace color
 MATH_CH = 99               # Virtual channel number for math operations
-
-# --- 1-2-5 value sequences ---
-
-VDIV_VALUES = [
-    0.002, 0.005,
-    0.010, 0.020, 0.050,
-    0.100, 0.200, 0.500,
-    1.000, 2.000, 5.000,
-    10.00,
-]
-
-TDIV_VALUES = [
-    5e-9, 10e-9, 20e-9, 50e-9,
-    100e-9, 200e-9, 500e-9,
-    1e-6, 2e-6, 5e-6,
-    10e-6, 20e-6, 50e-6,
-    100e-6, 200e-6, 500e-6,
-    1e-3, 2e-3, 5e-3,
-    10e-3, 20e-3, 50e-3,
-    100e-3, 200e-3, 500e-3,
-    1.0, 2.0, 5.0,
-    10.0, 20.0, 50.0,
-]
-
 
 # --- SI prefix formatting ---
 
