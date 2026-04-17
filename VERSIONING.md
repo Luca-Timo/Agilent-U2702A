@@ -20,273 +20,155 @@
 
 ## 0.1.x-alpha -- Foundation & Connection ✅
 
-**Goal**: Establish USB communication with U2702A and display waveforms.
-
-- [x] Project scaffolding (PySide6 app skeleton)
-- [x] Hardware abstraction layer (separate communication from analysis)
-- [x] USB connection via ESP32-S3 bridge (replaced pyvisa-py)
-- [x] SCPI command protocol layer (from sniffed commands)
-- [x] SCPI Tester GUI (send/receive commands, binary waveform display)
-- [x] Serial bridge client (thread-safe, binary protocol)
-- [x] Status bar (connection state)
-
-**Milestone**: Full SCPI round-trip working — text ~1ms, binary waveforms ~39ms.
-
----
+USB communication via ESP32-S3 bridge, SCPI protocol layer, serial bridge client, SCPI Tester, status bar.
 
 ## 0.2.x-alpha -- Controls, Scaling & Trigger ✅
 
-**Goal**: Full oscilloscope GUI with controls, scaling, trigger, and measurements.
-
-- [x] Keysight-style front panel layout (graph left, controls right)
-- [x] Custom rotary knob widget (drag-to-turn + click-to-edit popup)
-- [x] Vertical scale (V/div) per channel via knob
-- [x] Horizontal scale (T/div) via knob
-- [x] Channel enable/disable (N-channel scalable architecture)
-- [x] Channel coupling (AC/DC) dropdown
-- [x] Vertical offset per channel via knob
-- [x] Horizontal position via knob
-- [x] Graticule overlay (scope grid)
-- [x] Edge trigger controls (level knob, source, slope, sweep, coupling)
-- [x] Basic measurements (Vpp, Vmin, Vmax, frequency, period)
-- [x] Connection dialog (separate window)
-- [x] Settings dialog (channel colors, probe attenuation)
-- [x] SCPI Tester accessible from Tools menu (shared connection)
-- [x] Dark theme (Fusion style)
-- [x] Measurement toggle buttons (Vpp, Vmin, Vmax, Vrms, Vmean, Freq, Period)
-- [x] Per-channel GND/0V markers on Y-axis (arrow + channel number)
-- [x] Trigger position marker on X-axis (▼ triangle)
-- [x] Larger default window size (1440×900)
-- [x] Trigger level indicator (dashed line + right-edge badge)
-- [x] Software trigger alignment (trigger edge at center marker)
-- [x] GPL v3 license
-- [x] About/License dialog in Help menu
-
-**Milestone**: Can control all scope settings from the GUI and see live waveforms.
-
----
+Keysight-style front panel, custom knobs, V/div / T/div, channel enable + coupling, trigger controls, measurements, dark theme, settings dialog, GPL v3 license.
 
 ## 0.3.x-alpha -- Trigger System ✅
 
-**Goal**: Functional trigger system.
+Edge trigger with source/slope/sweep/coupling, trigger mode (Auto/Normal/Single), trigger status indicator, crossing marker, slope arrow, software trigger alignment, drag-to-zoom + Cmd+Z undo.
 
-- [x] Edge trigger (rising/falling/either/alternating)
-- [x] Trigger source selection (CH1/CH2/EXT)
-- [x] Trigger level adjustment (knob + drag on graph)
-- [x] Trigger mode: Auto / Normal / Single
-- [x] Trigger status indicator (ARMED/TRIG'D/AUTO/READY)
-- [x] Trigger crossing marker on waveform trace (interpolated position)
-- [x] Trigger slope indicator (dropdown + crossing label ↗/↘/↕/⇅)
-- [x] Trigger coupling (DC/AC/LFR/HFR)
-- [x] Software trigger alignment (crossing detection)
-- [x] Drag-to-zoom with Cmd+Z undo
-- [ ] Pulse width trigger (protocol defined, GUI not yet wired)
-
-**Milestone**: Stable triggered acquisitions.
-
----
+- [x] Pulse-width trigger (GUI wired in 1.0.0-beta; protocol was already defined)
 
 ## 0.4.x-alpha -- Measurements & Math ✅
 
-**Goal**: Automatic measurements and signal analysis.
-
-- [x] Vpp, Vmax, Vmin measurements
-- [x] Vrms (AC and DC) measurements
-- [x] Frequency and period measurements
-- [x] Measurement display panel (toggle buttons + per-channel grid)
-- [x] Rise/fall time measurements (10%/90% threshold interpolation)
-- [x] Duty cycle measurement (midpoint threshold)
-- [x] Cursor measurements (time + voltage, draggable lines + readout bar)
-- [x] Cursor readout panel (ΔT, 1/ΔT, ΔV)
-- [x] Toolbar cleanup (consistent button/indicator sizing)
-- [x] Settings: knob scroll wheel toggle
-
-**Milestone**: All standard oscilloscope measurements working.
-
----
+Vpp / Vmax / Vmin / Vrms / frequency / period / rise / fall / duty; toggleable measurement panel; cursor system with readout bar.
 
 ## 0.5.x-alpha -- Probe & Calibration ✅
 
-**Goal**: Probe configuration and calibration.
-
-- [x] Probe settings page (per-probe configuration)
-- [x] Probe type selection: 1:1, 1:10, 1:100, 1:1000
-- [x] Probe factor applied to all measurements and display
-- [x] Probe compensation check (guidance dialog)
-- [x] Self-calibration trigger (N/A — U2702A has no CAL SCPI commands)
-- [x] Custom probe attenuation factor (user-defined via dialog)
-- [x] Effective V/div label (shown when probe ≠ 1x)
-- [x] Probe badge on waveform GND markers
-
-**Milestone**: Accurate measurements with any probe type.
-
----
+1:1 / 1:10 / 1:100 / 1:1000 / custom probe factors; probe compensation dialog; effective V/div label; probe badges on GND markers.
 
 ## 0.6.x-alpha -- Multimeter Mode ✅
 
-**Goal**: Digital multimeter display mode.
-
-- [x] Multimeter mode toggle (utility panel button, disables scope-only controls)
-- [x] Large digital voltage display (DC, AC RMS, AC+DC RMS)
-- [x] Frequency counter display
-- [x] Min/Max/Average tracking (per-channel, reset button)
-- [x] Auto-range display (throttled V/div adjustment in DMM mode)
-- [x] Switchable between scope view and multimeter view (widget swap)
-- [x] Current measurement mode (I = V/R via shunt resistor, scope + DMM)
-- [x] Per-channel V/A toggle with selectable shunt resistance
-- [x] Hold (freeze DMM readings)
-- [x] Relative / Δ REL mode (delta from captured reference)
-- [x] Range Lock (disable auto-range in DMM mode)
-- [x] Channel-aware Y cursor readout (channel selector converts to correct V/div, probe, shunt)
-- [x] Cursor waveform badges show physical values for selected channel
-- [x] Shunt resistance changed from dropdown to free-text input (Ω)
-- [x] V/A toggle button visibility and sizing improvements
-- [x] Column layout stability (shunt widget retains space when hidden)
-
-**Milestone**: Can use scope as a basic digital multimeter.
-
----
+DC / AC RMS / AC+DC RMS display, Min/Max/Avg tracking, auto-range, current mode via shunt, Hold / Relative / Range-Lock.
 
 ## 0.7.x-alpha -- Session Files & Persistence ✅
 
-**Goal**: Save/load workspace configurations.
+JSON session save/load, Recent Sessions, auto-save + auto-restore, QSettings (geometry, last port/baud).
 
-- [x] Session file format (JSON schema v0.7.0)
-- [x] `gui/session.py` — gather/apply/save/load state functions
-- [x] Save current setup: channels, timebase, trigger, cursors, display, window geometry
-- [x] Load session file and restore all settings (correct order: channels → timebase → trigger → cursors → display)
-- [x] File > Save Session (Ctrl+S) / Save As (Ctrl+Shift+S) / Load (Ctrl+O)
-- [x] Recent Sessions submenu (last 5 files)
-- [x] Auto-save last session on exit (`~/.config/U2702A/last_session.json`)
-- [x] Auto-restore session on startup
-- [x] QSettings persistence (window geometry, recent files, last serial port/baud)
-- [x] Connection dialog pre-selects last used port and baud rate
+## 0.8.x-alpha -- Export, Data & Multi-Graph ✅
 
-**Milestone**: Users can save and recall their scope setups.
+Waveform export (CSV / JSON / NPZ), import waveform data, graph export (PNG / PDF, dark & light), unified Export dialog, multi-graph / split view, FFT, math (CH1+CH2, CH1-CH2, CH1×CH2, CH1÷CH2), reference waveform storage/recall, waveform averaging, knob-scroll-off default.
 
----
+## 0.9.0-alpha -- Architecture Refactor ✅
 
-## 0.8.x-alpha -- Export & Data ← CURRENT
+Config centralization (`config/scope_config.py` as single source of truth for scope-specific values), thread safety in acquisition worker (QMutex + snapshot-per-frame), session version migration, structured logging, per-call serial error handling, performance fixes (measurement cache, hot-path allocation removal), small cleanups (DMM autorange modulo, AppSettings singleton, bulk cursor setters).
 
-**Goal**: Data export capabilities.
+## 0.10.0-alpha -- Lab Bench Architecture ✅
 
-- [x] Waveform export to CSV (with metadata header + measurements)
-- [x] Waveform export to JSON (structured with settings + measurements)
-- [x] Export Graph as PNG (dark/light theme, configurable elements)
-- [x] Export Graph as PDF (A4 landscape, print-friendly light mode)
-- [x] Unified Export dialog (Data tab: CSV/JSON, Graph tab: PNG/PDF)
-- [x] Configurable graph export (measurements, cursors, trigger, V/div & T/div labels, GND markers)
-- [x] Quick Export CSV shortcut (Ctrl+Shift+E)
-- [x] Waveform export to NumPy (.npz) with raw scope-space voltage
-- [x] Import waveform data (CSV/JSON/NPZ) for display
-- [x] Cursor labels: C-X1/C-X2 (time) and C-Y1/C-Y2 (voltage)
-- [x] Knob scroll disabled by default
-- [ ] Multi-graph layout (per-channel separate graphs, dedicated FFT/math graph panes)
-- [ ] FFT math function display
-- [ ] Math functions (CH1+CH2, CH1-CH2, CH1*CH2)
-- [ ] Waveform averaging
-- [ ] Reference waveform storage/recall
+Turned the single-scope app into a multi-instrument "lab bench":
 
-**Milestone**: Can export data for analysis in other tools + advanced display modes.
+- `Capabilities` + `InstrumentDriver` Protocol
+- Extract `U2702ADriver` from the Qt worker (fully headless-scriptable)
+- Config hierarchy (`InstrumentConfig` → `OscilloscopeConfig` / `DMMConfig` / `FunctionGeneratorConfig`)
+- `LayoutFactory` (`OscilloscopeLayout`, `DMMLayout`, `FunctionGeneratorLayout`)
+- `AcquisitionResult` hierarchy (`WaveformData` / `MeterReading` / `GeneratorState`)
+- `automation` package (`LabSession`, `ActionRecorder`)
+- `*IDN?` auto-discovery (toggleable in Settings)
+- Generic-DMM driver (SCPI-standard)
+- `LauncherWindow` + `InstrumentWindow`, multi-window mode
+- PyInstaller build + GitHub Actions CI (macOS arm64 / Windows x64 / Linux x64)
+
+## 0.11.0-alpha -- Agilent 33120A + LTB rename ✅
+
+- `Agilent33120ADriver` (RS-232 via USB-RS232 adapter, output-off safety invariant)
+- `DemoFuncGenBridge`, `FunctionGeneratorLayout` (preview + output indicator + control panels)
+- Launcher branch + `InstrumentWindow` `GeneratorState` routing
+- App renamed `LabBench` → `LTB` (binary) / `LabTestBench` (display)
+- FFT pane in combined view (not only split) + live hover readout
 
 ---
 
-## 1.0.0-beta -- Feature Complete
+## 1.0.0-beta -- Feature Complete ← TARGET
 
-**Goal**: All planned features integrated, testing phase.
+Goal: All planned 1.0.0 features integrated.
 
-- [ ] Logic level view (configurable threshold)
-- [ ] Protocol decoding: UART
-- [ ] Protocol decoding: SPI
-- [ ] Protocol decoding: I2C
-- [ ] Protocol decode overlay on waveform
-- [ ] Dark theme (default)
-- [ ] Light theme option
-- [ ] About dialog
-- [ ] Keyboard shortcuts
-- [ ] Error handling and user-friendly messages
-- [ ] Performance optimization (target: 30+ FPS continuous)
-
-**Milestone**: All features working, enter testing phase.
-
----
+- [ ] Light theme option (dark remains default; export already supports both)
+- [ ] Keyboard-shortcut audit + in-app Shortcuts dialog
+- [ ] Error-handling polish (connection-retry UX, clearer status-bar messages)
+- [ ] In-app user documentation (Help menu)
+- [x] Pulse-width trigger GUI (open since 0.3.x)
+- [x] Launcher teardown `destroyed`-signal crash fix
+- [x] Performance target (30+ FPS continuous) — already met
 
 ## 1.0.0-rc -- Pre-Release
 
-**Goal**: Bug fixes, polish, documentation.
-
 - [ ] All known bugs fixed
-- [ ] User documentation / help
-- [ ] Installation guide (macOS)
-- [ ] Performance profiling and optimization
-- [ ] Edge case handling
 - [ ] Community testing feedback addressed
-
-**Milestone**: Ready for public release.
-
----
+- [ ] Edge-case handling pass
+- [x] Installation guide (macOS / Windows / Linux — in README)
+- [x] Performance profiling
 
 ## 1.0.0 -- Release
 
-**Goal**: Stable public release.
-
-- [ ] Final testing pass
-- [ ] README with full documentation
-- [ ] pyinstaller / cx_Freeze standalone .app bundle
-- [ ] Release notes
+- [ ] Final testing pass against real U2702A + 33120A
+- [ ] CHANGELOG / release notes
+- [x] Standalone bundle (macOS .app / Windows .exe / Linux tarball) — in CI
+- [ ] Developer-ID signing + notarization (macOS; optional, ~$99/yr)
 
 ---
 
-## Nice to Have (Post 1.0 / Future)
+## Post-1.0 / Future (not blocking 1.0.0)
 
-- [ ] Automated probe compensation (square wave output + measure overshoot/settling to guide adjustment)
+### Explicitly descoped per user request (no ship date)
+
+- Protocol decoding: UART / SPI / I²C / overlay — **skipped**
+- Logic-level view — **skipped** (needs MSO hardware anyway)
+
+### Future instruments (queued — see `project_future_instruments.md`)
+
+- [ ] Rigol MSO2302A — 2ch analog + 16ch logic; first LAN/TCP transport; first mixed-signal scope (`TCPBridge` class)
+- [ ] Racal-Dana 1992 — universal counter/timer; first `InstrumentKind.COUNTER`; likely pre-SCPI dialect; possibly first `GPIBBridge`
+- [ ] Full Agilent 33120A feature set — AM/FM/FSK modulation, sweep (linear/log), burst, arbitrary-waveform upload
+
+### Nice-to-have
+
+- [ ] Automated probe compensation (drive 33120A + measure overshoot/settling)
 - [ ] External trigger input support
 - [ ] TV trigger mode
 - [ ] XY display mode
-- [ ] Persistence display (intensity graded)
+- [ ] Persistence display (intensity-graded)
 - [ ] Segmented memory acquisition
-- [ ] LAN bridge mode (access scope over network)
-- [ ] Additional protocol decoders (CAN, LIN, 1-Wire, etc.)
-- [ ] Plugin system for community hardware drivers
-- [ ] Waveform math (CH1+CH2, CH1-CH2, CH1*CH2)
+- [ ] Additional protocol decoders (CAN, LIN, 1-Wire) — iff decoding gets un-descoped
+- [x] Plugin system for community hardware drivers — effectively achieved via the lab-bench architecture
 - [ ] Mask testing
 - [ ] Power analysis measurements
+- [ ] JSON-RPC IPC server so external processes can drive a running GUI (`automation/ipc.py`)
 
 ---
 
-## Modular Architecture Requirement
+## Modular Architecture (fulfilled by the lab-bench refactor)
 
-The codebase MUST separate:
-
-1. **Communication Layer** (`src/instrument/`) -- hardware-specific USB/SCPI communication
-   - Abstract base class for any oscilloscope
-   - U2702A-specific implementation
-   - Other users can add their own hardware by implementing the base class
-
-2. **Analysis Layer** (`src/processing/`) -- hardware-independent signal analysis
-   - Measurements, FFT, protocol decoding, math
-   - Works on NumPy arrays regardless of source hardware
-
-3. **GUI Layer** (`src/gui/`) -- hardware-independent display
-   - Waveform display, controls, panels
-   - Binds to the abstract instrument interface, not U2702A directly
+As of 0.10.0-alpha the three layers are formal:
 
 ```
-src/instrument/
-    base.py             # Abstract oscilloscope interface
-    u2702a.py           # Agilent U2702A implementation
-    # future: rigol_ds1054z.py, siglent_sds1104.py, etc.
+config/                         # hardware profiles per model
+    instrument_config.py        # InstrumentConfig + kind-specific subclasses
+    presets/                    # per-model presets (u2702a, generic_dmm, 33120a, …)
 
-src/processing/
-    measurements.py     # Vpp, RMS, freq -- works on any waveform data
-    fft.py              # FFT analysis
-    probe.py            # Probe compensation math
-    decoder.py          # Protocol decoding (UART, SPI, I2C)
+instrument/                     # transport + drivers
+    serial_bridge.py            # pyserial Bridge
+    demo_bridge.py + variants   # synthetic bridges for demo mode
+    capabilities.py             # InstrumentKind, AcquisitionModel, Capabilities
+    driver.py                   # InstrumentDriver Protocol
+    discovery.py                # *IDN? probing
+    drivers/                    # per-model drivers (u2702a, generic_dmm, agilent_33120a, …)
 
-src/gui/
-    main_window.py      # Uses abstract instrument interface
-    waveform_widget.py  # Displays NumPy arrays, doesn't know about hardware
-    ...
+processing/                     # hardware-independent analysis
+    acquisition_result.py       # WaveformData / MeterReading / GeneratorState
+    measurements.py, fft.py, averaging.py, math_ops.py, …
+
+automation/                     # headless scripting
+    session.py                  # LabSession
+    recorder.py                 # ActionRecorder (save/load/replay)
+
+gui/                            # hardware-independent display
+    launcher_window.py          # top-level
+    instrument_window.py        # generic per-instrument shell
+    main_window.py              # scope-specialised window
+    layouts/                    # per-kind LayoutFactory
 ```
 
-This way, anyone can add support for their own oscilloscope by implementing `base.py`.
+Adding a new instrument = preset + driver + optional layout, registered in `config/__init__.py` and `automation/session.py`. Three consumers so far (U2702A, Generic-DMM, 33120A) confirm the seams.

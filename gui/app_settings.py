@@ -20,6 +20,10 @@ class _AppSettings:
     # if probing interferes with a third-party device on the same bus
     # or slows the dialog open too much.
     auto_discovery_enabled: bool = True
+    # "dark" (default) or "light". Applied at app start from
+    # gui/main.py; live-switching is not supported — the Settings
+    # dialog tells the user to restart.
+    theme_mode: str = "dark"
 
 
 # Module-level singleton — import as ``from gui.app_settings import SETTINGS``.

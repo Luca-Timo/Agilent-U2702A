@@ -195,6 +195,34 @@ class SettingsDialog(QDialog):
         conn_group.setLayout(conn_layout)
         controls_layout.addWidget(conn_group)
 
+        # --- Theme settings ---
+        theme_group = QGroupBox("Appearance")
+        theme_layout = QVBoxLayout()
+
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("Theme:"))
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItems(["Dark (default)", "Light"])
+        self._theme_combo.setCurrentIndex(
+            1 if _APP_SETTINGS.theme_mode == "light" else 0,
+        )
+        self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        theme_row.addWidget(self._theme_combo, stretch=1)
+        theme_layout.addLayout(theme_row)
+
+        theme_note = QLabel(
+            "The waveform plot canvas stays dark in both themes — only\n"
+            "the app chrome (menus, panels, dialogs) changes. Theme\n"
+            "change takes effect after restart."
+        )
+        theme_note.setStyleSheet(
+            "color: #666666; font-size: 10px; padding-top: 4px;"
+        )
+        theme_layout.addWidget(theme_note)
+
+        theme_group.setLayout(theme_layout)
+        controls_layout.addWidget(theme_group)
+
         controls_layout.addStretch()
         tabs.addTab(controls_tab, "Controls")
 
@@ -282,6 +310,14 @@ class SettingsDialog(QDialog):
     def _on_discovery_toggled(self, checked: bool):
         from gui.app_settings import SETTINGS
         SETTINGS.auto_discovery_enabled = bool(checked)
+
+    def _on_theme_changed(self, index: int):
+        """Persist theme choice and tell the user about the restart."""
+        from PySide6.QtCore import QSettings
+        from gui.app_settings import SETTINGS
+        mode = "light" if index == 1 else "dark"
+        SETTINGS.theme_mode = mode
+        QSettings("AgilentU2702A", "LTB").setValue("theme_mode", mode)
 
     _STANDARD_PROBES = {"1x", "10x", "20x", "50x", "100x"}
 

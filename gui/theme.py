@@ -198,3 +198,100 @@ def apply_dark_theme(app: QApplication):
             padding: 4px;
         }
     """)
+
+
+def apply_light_theme(app: QApplication):
+    """Apply light Fusion theme to the application chrome.
+
+    Only the Qt chrome (menus, panels, buttons, dialogs) goes light —
+    the waveform plot and FFT pane stay on a dark graph canvas
+    (BG_PLOT), same as a real bench oscilloscope. Channel colours
+    stay as-is; they're tuned for readability on the dark canvas
+    and the canvas stays dark regardless of the app theme.
+
+    The theme is picked at app start from ``AppSettings.theme_mode``.
+    Live theme switching is NOT supported — the Settings dialog tells
+    the user to restart.
+    """
+    app.setStyle("Fusion")
+
+    WINDOW_BG   = "#f4f4f4"
+    BASE_BG     = "#ffffff"
+    ALT_BG      = "#e8e8e8"
+    BUTTON_BG   = "#e4e4e4"
+    TEXT        = "#1a1a1a"
+    TEXT_MUTED  = "#666666"
+    BORDER      = "#c0c0c0"
+    DISABLED    = "#9a9a9a"
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT))
+    palette.setColor(QPalette.ColorRole.Base, QColor(BASE_BG))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(ALT_BG))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(BASE_BG))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(TEXT))
+    palette.setColor(QPalette.ColorRole.Text, QColor(TEXT))
+    palette.setColor(QPalette.ColorRole.Button, QColor(BUTTON_BG))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#000000"))
+    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT_BLUE))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT_BLUE))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+
+    palette.setColor(QPalette.ColorGroup.Disabled,
+                     QPalette.ColorRole.WindowText, QColor(DISABLED))
+    palette.setColor(QPalette.ColorGroup.Disabled,
+                     QPalette.ColorRole.Text, QColor(DISABLED))
+    palette.setColor(QPalette.ColorGroup.Disabled,
+                     QPalette.ColorRole.ButtonText, QColor(DISABLED))
+
+    app.setPalette(palette)
+
+    app.setStyleSheet(f"""
+        QGroupBox {{
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            margin-top: 8px;
+            padding-top: 12px;
+            font-weight: bold;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+        }}
+        QComboBox {{
+            padding: 3px 6px;
+            border: 1px solid {BORDER};
+            border-radius: 3px;
+            background-color: {BASE_BG};
+        }}
+        QPushButton {{
+            padding: 4px 12px;
+            border: 1px solid {BORDER};
+            border-radius: 3px;
+            background-color: {BUTTON_BG};
+            color: {TEXT};
+        }}
+        QPushButton:hover {{
+            background-color: #d8d8d8;
+        }}
+        QPushButton:pressed {{
+            background-color: #c8c8c8;
+        }}
+        QToolTip {{
+            background-color: {BASE_BG};
+            color: {TEXT};
+            border: 1px solid {BORDER};
+            padding: 4px;
+        }}
+    """)
+
+
+def apply_theme(app: QApplication, mode: str = "dark") -> None:
+    """Apply the named theme. Falls back to dark for unknown modes."""
+    if mode == "light":
+        apply_light_theme(app)
+    else:
+        apply_dark_theme(app)
