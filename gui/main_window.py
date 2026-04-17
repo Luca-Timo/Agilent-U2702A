@@ -1041,6 +1041,7 @@ class MainWindow(QMainWindow):
         self._channel_panel.set_math_enabled(enabled)
         self._measurement_bar.set_channel_visible(MATH_CH, enabled)
         self._dmm_widget.set_channel_visible(MATH_CH, enabled)
+        self._cursor_readout.set_math_available(enabled)
         if enabled:
             self._update_math_vdiv_range(auto_set=True)
             self._container.add_math_pane()
@@ -1181,13 +1182,18 @@ class MainWindow(QMainWindow):
         """Handle channel selector click on cursor readout bar."""
         self._cursor_channel = ch
         self._waveform._cursor_channel = ch
+        self._container._split.set_cursor_channel(ch)
         self._sync_cursor_channel_mode()
 
     def _sync_cursor_channel_mode(self):
         """Sync cursor readout unit and waveform badges to the cursor channel."""
         ch = self._cursor_channel
-        ch_state = self._channel_panel.get_state(ch)
-        is_current = ch_state.current_mode
+        if ch == MATH_CH:
+            # Math channel: always voltage, no current mode
+            is_current = False
+        else:
+            ch_state = self._channel_panel.get_state(ch)
+            is_current = ch_state.current_mode
         self._cursor_readout.set_current_mode(is_current)
         self._waveform.set_cursor_current_mode(is_current, channel=ch)
         # Re-push converted values
@@ -1204,6 +1210,11 @@ class MainWindow(QMainWindow):
         (or current if in current mode).
         """
         ch = self._cursor_channel
+        if ch == MATH_CH:
+            # Math channel: display value IS the physical value (no probe, no current mode)
+            scale = self._waveform._voltage_scale(ch)
+            return display_y / scale if abs(scale) > 1e-15 else display_y
+
         scale = self._waveform._voltage_scale(ch)
         if abs(scale) < 1e-15:
             return display_y

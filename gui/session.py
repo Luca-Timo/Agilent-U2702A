@@ -62,6 +62,8 @@ def default_state() -> dict:
             "fft_window": "hann",
             "math_enabled": False,
             "math_op": "add",
+            "math_vdiv": 0.5,
+            "math_offset": 0.0,
         },
         "window": {"geometry": [100, 100, 1440, 900]},
     }
@@ -136,6 +138,8 @@ def gather_state(win) -> dict:
         "fft_window": win._fft_window,
         "math_enabled": win._math_enabled,
         "math_op": win._math_op,
+        "math_vdiv": win._channel_panel.math_column.vdiv,
+        "math_offset": win._channel_panel.math_column.offset,
     }
 
     # --- Window geometry ---
@@ -348,6 +352,14 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
     math_op = disp.get("math_op", "add")
     win._math_panel.set_operation(math_op)
     win._math_op = math_op
+    # Restore math V/div and offset before enabling (so range is ready)
+    math_vdiv = disp.get("math_vdiv", 0.5)
+    math_offset = disp.get("math_offset", 0.0)
+    math_col = win._channel_panel.math_column
+    math_col.update_vdiv_range(math_vdiv)
+    math_col.set_vdiv(math_vdiv)
+    math_col.update_offset_range(math_vdiv)
+    math_col.set_offset(math_offset)
     math_enabled = disp.get("math_enabled", False)
     win._math_panel.set_enabled(math_enabled)
     win._math_enabled = math_enabled

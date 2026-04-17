@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.theme import (
-    NUM_CHANNELS, channel_color,
+    NUM_CHANNELS, MATH_CH, channel_color,
     format_voltage, format_current, format_frequency, format_time,
 )
 
@@ -35,6 +35,7 @@ class CursorReadout(QFrame):
         self._mode = "off"
         self._current_mode = False  # True = display amps instead of volts
         self._selected_ch = 1       # Which channel the Y cursors measure
+        self._math_available = False  # True when math channel is enabled
 
         self.setStyleSheet(
             "QFrame { border: 1px solid #333333; border-radius: 3px; "
@@ -192,9 +193,23 @@ class CursorReadout(QFrame):
         self._dv_value.setText(fmt(dv))
 
     def _on_ch_clicked(self):
-        """Cycle through channels: CH1 → CH2 → CH1 → …"""
-        self._selected_ch = (self._selected_ch % NUM_CHANNELS) + 1
-        self._ch_btn.setText(f"CH{self._selected_ch}")
+        """Cycle through channels: CH1 → CH2 → (Math if enabled) → CH1 → …"""
+        if self._selected_ch == MATH_CH:
+            # Math → CH1
+            self._selected_ch = 1
+        elif self._selected_ch == NUM_CHANNELS and self._math_available:
+            # Last real channel → Math
+            self._selected_ch = MATH_CH
+        else:
+            # CH1 → CH2, or CH2 → CH1 if math not available
+            self._selected_ch = (self._selected_ch % NUM_CHANNELS) + 1
+
+        if self._selected_ch == MATH_CH:
+            self._ch_btn.setText("Math")
+            self._ch_btn.setFixedSize(44, 20)
+        else:
+            self._ch_btn.setText(f"CH{self._selected_ch}")
+            self._ch_btn.setFixedSize(38, 20)
         self._update_ch_btn_style()
         self.channel_selected.emit(self._selected_ch)
 
@@ -208,10 +223,26 @@ class CursorReadout(QFrame):
         self._current_mode = active
         self._dv_label.setText("ΔI:" if active else "ΔV:")
 
+    def set_math_available(self, available: bool):
+        """Enable/disable Math in the channel cycle."""
+        self._math_available = available
+        # If math was selected but is now disabled, fall back to CH1
+        if not available and self._selected_ch == MATH_CH:
+            self._selected_ch = 1
+            self._ch_btn.setText("CH1")
+            self._ch_btn.setFixedSize(38, 20)
+            self._update_ch_btn_style()
+            self.channel_selected.emit(self._selected_ch)
+
     def set_channel(self, ch: int):
         """Programmatically select a channel (without emitting signal)."""
         self._selected_ch = ch
-        self._ch_btn.setText(f"CH{ch}")
+        if ch == MATH_CH:
+            self._ch_btn.setText("Math")
+            self._ch_btn.setFixedSize(44, 20)
+        else:
+            self._ch_btn.setText(f"CH{ch}")
+            self._ch_btn.setFixedSize(38, 20)
         self._update_ch_btn_style()
 
     @property
