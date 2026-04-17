@@ -15,7 +15,6 @@ divider between the waveform area and the FFT pane via the QSplitter.
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPen
 from PySide6.QtWidgets import (
     QStackedWidget, QSplitter, QVBoxLayout, QWidget,
 )
@@ -914,7 +913,11 @@ class WaveformContainer(QWidget):
         w.setMouseEnabled(x=True, y=False)
         w.setMenuEnabled(False)
         # Stash the trace on the widget itself so update_fft can find it.
-        w._fft_trace = w.plot(pen=QPen(pg.mkColor("#ffffff"), 1))
+        # Use pg.mkPen (not QPen) so the pen is cosmetic — otherwise
+        # pyqtgraph treats ``width=1`` as 1 data-unit (1 Hz / 1 dB)
+        # and the line renders invisibly thin, leaving only the
+        # sample points visible.
+        w._fft_trace = w.plot(pen=pg.mkPen("#ffffff", width=1.2))
         w.setMinimumHeight(120)
         return w
 
