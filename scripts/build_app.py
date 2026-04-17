@@ -103,9 +103,15 @@ def main() -> int:
     if sys.platform == "darwin" and not args.onefile:
         print(f"  open {dist / 'LabBench.app'}")
     elif sys.platform == "win32":
-        print(f"  {dist / ('LabBench.exe' if args.onefile else 'LabBench' / 'LabBench.exe')}")
+        if args.onefile:
+            print(f"  {dist / 'LabBench.exe'}")
+        else:
+            print(f"  {dist / 'LabBench' / 'LabBench.exe'}")
     else:
-        print(f"  {dist / ('LabBench' if args.onefile else 'LabBench' / 'LabBench')}")
+        if args.onefile:
+            print(f"  {dist / 'LabBench'}")
+        else:
+            print(f"  {dist / 'LabBench' / 'LabBench'}")
     return 0
 
 
