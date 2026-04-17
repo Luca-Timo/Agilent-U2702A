@@ -2,8 +2,8 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.8.3-alpha
-> Last updated: 2026-03-13
+> Current version: 0.9.0-alpha
+> Last updated: 2026-04-17
 
 ---
 
