@@ -118,9 +118,22 @@ a GitHub Release with the same bundles.
 
 | OS | Artifact | Run it |
 |---|---|---|
-| macOS (Apple Silicon) | `LabBench-macos-arm64.zip` | unzip, `open LabBench.app` |
+| macOS (Apple Silicon) | `LabBench-macos-arm64.zip` | unzip, `open LabBench.app` (see macOS note below) |
 | Windows x64 | `LabBench-windows-x64.zip` | unzip, double-click `LabBench.exe` |
 | Linux x64 | `LabBench-linux-x64.tar.gz` | `tar -xzf …`, run `LabBench/LabBench` |
+
+**macOS Gatekeeper note.** The CI build isn't signed with an Apple
+Developer ID (costs $99/yr), so the first time you launch it macOS
+refuses with *"Apple could not verify …is free of malware"*. Clear
+the quarantine flag once per download:
+
+```bash
+xattr -dr com.apple.quarantine ~/Downloads/LabBench.app
+open ~/Downloads/LabBench.app
+```
+
+Or right-click `LabBench.app` → hold Option → **Open** → **Open anyway**.
+The app will launch and remember the decision.
 
 ### Build the app locally
 
