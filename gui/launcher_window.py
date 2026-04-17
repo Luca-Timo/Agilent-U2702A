@@ -35,7 +35,10 @@ from PySide6.QtWidgets import (
     QGroupBox, QScrollArea, QFrame, QSizePolicy, QMessageBox,
 )
 
-from config import ACTIVE, REGISTRY, DMMConfig, OscilloscopeConfig
+from config import (
+    ACTIVE, REGISTRY,
+    DMMConfig, FunctionGeneratorConfig, OscilloscopeConfig,
+)
 from gui.app_settings import SETTINGS
 from gui.instrument_window import InstrumentWindow
 
@@ -406,6 +409,19 @@ class LauncherWindow(QMainWindow):
         if isinstance(cfg, DMMConfig):
             from gui.layouts import DMMLayout
             layout = DMMLayout(num_channels=cfg.num_channels)
+            title_suffix = "(demo)" if demo else (port or "")
+            return InstrumentWindow(
+                driver=driver,
+                layout=layout,
+                title=f"{cfg.display_name}  {title_suffix}".strip(),
+            )
+
+        if isinstance(cfg, FunctionGeneratorConfig):
+            from gui.layouts import FunctionGeneratorLayout
+            layout = FunctionGeneratorLayout(
+                frequency_range=cfg.frequency_range,
+                amplitude_range=cfg.amplitude_range,
+            )
             title_suffix = "(demo)" if demo else (port or "")
             return InstrumentWindow(
                 driver=driver,
