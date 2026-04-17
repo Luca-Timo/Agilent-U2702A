@@ -7,26 +7,37 @@ Agilent U2702A hardware profile.
 - Reached over an ESP32-S3 serial bridge (see ``instrument/serial_bridge.py``)
 """
 
-from config.scope_config import (
+from config.instrument_config import (
     AdcFormat,
     DemoSignal,
     GridConfig,
-    ScopeConfig,
+    OscilloscopeConfig,
     SerialConfig,
     UsbIds,
 )
 
 
-U2702A = ScopeConfig(
+U2702A = OscilloscopeConfig(
     model="U2702A",
     vendor="Agilent",
     num_channels=2,
+    serial=SerialConfig(
+        baudrate=2_000_000,
+        timeout_s=5.0,
+        bridge_vid=0x10C4,         # Silicon Labs CP2102N
+        bridge_pid=0xEA60,
+    ),
+    usb=UsbIds(
+        vid=0x0957,                # Agilent/Keysight
+        pid_operational=0x2918,    # Normal USBTMC mode
+        pid_boot=0x2818,           # Firmware-update mode
+    ),
     adc=AdcFormat(
-        data_offset=2,       # 2-byte prefix (01 00)
-        data_length=1256,    # samples per channel
-        center=128,          # ADC 128 = 0 V
-        range=256,           # 8-bit unsigned
-        payload_size=2514,   # 2 prefix + 1256 CH data + 1256 padding
+        data_offset=2,             # 2-byte prefix (01 00)
+        data_length=1256,          # samples per channel
+        center=128,                # ADC 128 = 0 V
+        range=256,                 # 8-bit unsigned
+        payload_size=2514,         # 2 prefix + 1256 CH data + 1256 padding
     ),
     grid=GridConfig(
         vertical_divs=8,
@@ -53,17 +64,6 @@ U2702A = ScopeConfig(
     ),
     standard_probes=("1x", "10x", "20x", "50x", "100x"),
     custom_probe_range=(0.001, 10000.0),
-    usb=UsbIds(
-        vid=0x0957,                # Agilent/Keysight
-        pid_operational=0x2918,    # Normal USBTMC mode
-        pid_boot=0x2818,           # Firmware-update mode
-    ),
-    serial=SerialConfig(
-        baudrate=2_000_000,
-        timeout_s=5.0,
-        bridge_vid=0x10C4,         # Silicon Labs CP2102N
-        bridge_pid=0xEA60,
-    ),
     demo_signal=DemoSignal(
         frequency_hz=1000.0,
         duty=0.5,
