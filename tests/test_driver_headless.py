@@ -278,5 +278,111 @@ class TestGenericDMMDriver(DriverContractMixin, unittest.TestCase):
             drv.close()
 
 
+class TestAgilent33120ADriver(DriverContractMixin, unittest.TestCase):
+    """Contract suite for the Agilent 33120A function generator driver."""
+
+    from instrument.drivers.agilent_33120a import Agilent33120ADriver  # noqa: E402
+    from instrument.demo_funcgen_bridge import DemoFuncGenBridge        # noqa: E402
+    driver_class = Agilent33120ADriver
+    _demo_bridge_class = DemoFuncGenBridge
+
+    def build_driver(self):
+        return self.driver_class(self._demo_bridge_class())
+
+    def test_acquire_returns_generator_state(self):
+        from processing.acquisition_result import GeneratorState
+        drv = self.build_driver()
+        drv.open()
+        try:
+            state = drv.acquire()
+            self.assertIsInstance(state, GeneratorState)
+            self.assertEqual(state.kind, "setpoint")
+            for key in ("frequency", "amplitude", "offset",
+                        "waveform", "output_load"):
+                self.assertIn(key, state.setpoints)
+        finally:
+            drv.close()
+
+    def test_output_off_on_open(self):
+        """Safety invariant — open() must leave the output OFF
+        regardless of what the instrument's previous state was."""
+        bridge = self._demo_bridge_class()
+        # Pre-set the demo bridge as if the instrument were left on.
+        bridge.open()
+        bridge.write("OUTP ON")
+        bridge.close()
+        # Now open the driver — it must force output off.
+        drv = self.driver_class(bridge)
+        drv.open()
+        try:
+            state = drv.acquire()
+            self.assertFalse(
+                state.output_enabled,
+                "Driver.open() must force OUTP OFF for safety",
+            )
+        finally:
+            drv.close()
+
+    def test_apply_setting_roundtrip(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            drv.apply_setting("frequency", 12345.0)
+            drv.apply_setting("amplitude", 2.5)
+            drv.apply_setting("offset", -0.5)
+            drv.apply_setting("waveform", "TRI")
+            drv.apply_setting("output_enabled", True)
+            drv.apply_setting("output_load", "INF")
+            self.assertAlmostEqual(drv.read_setting("frequency"), 12345.0)
+            self.assertAlmostEqual(drv.read_setting("amplitude"), 2.5)
+            self.assertAlmostEqual(drv.read_setting("offset"), -0.5)
+            self.assertEqual(drv.read_setting("waveform"), "TRI")
+            self.assertTrue(drv.read_setting("output_enabled"))
+            self.assertEqual(drv.read_setting("output_load"), "INF")
+        finally:
+            drv.close()
+
+    def test_frequency_out_of_range_rejected(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            with self.assertRaises(ValueError):
+                drv.apply_setting("frequency", -1.0)
+            with self.assertRaises(ValueError):
+                drv.apply_setting("frequency", 20_000_000.0)  # above 15 MHz
+        finally:
+            drv.close()
+
+    def test_unknown_waveform_rejected(self):
+        drv = self.build_driver()
+        drv.open()
+        try:
+            with self.assertRaises(KeyError):
+                drv.apply_setting("waveform", "BOGUS")
+        finally:
+            drv.close()
+
+    def test_duty_cycle_rejected_on_non_square(self):
+        """PULS:DCYC is only valid when FUNC:SHAP SQU."""
+        drv = self.build_driver()
+        drv.open()
+        try:
+            # Default waveform is SIN — duty cycle should fail.
+            drv.apply_setting("waveform", "SIN")
+            with self.assertRaises(ValueError):
+                drv.apply_setting("duty_cycle", 50)
+            # Switch to SQU, now it should work.
+            drv.apply_setting("waveform", "SQU")
+            drv.apply_setting("duty_cycle", 30)
+            self.assertAlmostEqual(drv.read_setting("duty_cycle"), 30.0)
+        finally:
+            drv.close()
+
+    def test_unknown_setting_rejected(self):
+        drv = self.build_driver()
+        with self.assertRaises(KeyError):
+            drv.apply_setting("not_a_real_key", 42)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

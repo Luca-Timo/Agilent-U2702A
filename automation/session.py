@@ -17,9 +17,15 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from config import REGISTRY, DMMConfig, InstrumentConfig
+from config import (
+    DMMConfig,
+    FunctionGeneratorConfig,
+    InstrumentConfig,
+    REGISTRY,
+)
 from instrument.demo_bridge import DemoBridge
 from instrument.demo_dmm_bridge import DemoDMMBridge
+from instrument.demo_funcgen_bridge import DemoFuncGenBridge
 from instrument.discovery import DiscoveredInstrument, discover
 from instrument.driver import Bridge, InstrumentDriver
 from instrument.serial_bridge import SerialBridge, list_serial_ports
@@ -30,12 +36,14 @@ logger = logging.getLogger(__name__)
 # Map from model name → driver class. Expanded as new drivers land.
 # Keeping this table in the session layer (not the driver modules)
 # avoids every driver having to import every other driver.
+from instrument.drivers.agilent_33120a import Agilent33120ADriver
 from instrument.drivers.generic_dmm import GenericDMMDriver
 from instrument.drivers.u2702a import U2702ADriver
 
 DRIVER_REGISTRY: dict[str, type] = {
     "U2702A": U2702ADriver,
     "Generic-DMM": GenericDMMDriver,
+    "33120A": Agilent33120ADriver,
 }
 
 
@@ -145,10 +153,13 @@ class LabSession:
         if demo:
             # Pick the demo bridge that matches the instrument kind.
             # Scopes get synthetic waveforms; DMMs get synthetic
-            # scalar readings. Driver modules are bridge-agnostic —
-            # they just need the protocol methods.
+            # scalar readings; function generators store+echo setpoints.
+            # Driver modules are bridge-agnostic — they just need the
+            # protocol methods.
             if isinstance(cfg, DMMConfig):
                 return DemoDMMBridge(model=model)
+            if isinstance(cfg, FunctionGeneratorConfig):
+                return DemoFuncGenBridge(model=model)
             return DemoBridge()
 
         chosen_port = port or auto_discover_port()

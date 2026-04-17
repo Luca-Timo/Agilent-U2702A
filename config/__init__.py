@@ -34,6 +34,7 @@ from config.instrument_config import (
     SerialConfig,
     UsbIds,
 )
+from config.presets.agilent_33120a import AGILENT_33120A
 from config.presets.generic_dmm import GENERIC_DMM
 from config.presets.u2702a import U2702A
 
@@ -44,6 +45,7 @@ from config.presets.u2702a import U2702A
 REGISTRY: dict[str, InstrumentConfig] = {
     U2702A.model: U2702A,
     GENERIC_DMM.model: GENERIC_DMM,
+    AGILENT_33120A.model: AGILENT_33120A,
 }
 
 
