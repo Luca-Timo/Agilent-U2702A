@@ -1,15 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for the U2702A lab-bench app.
+PyInstaller spec for the LabTestBench (LTB) lab-bench app.
 
-Produces a standalone ``LabBench`` executable that bundles Python,
+Produces a standalone ``LTB`` executable (short name for the binary;
+"LabTestBench" is the display name in the macOS bundle plist and in
+the launcher window titles) that bundles Python,
 PySide6, PyQtGraph, numpy, and every instrument/processing/gui module
 into one directory (``--onedir``) or one file (``--onefile`` — set
 ONEFILE=1 when invoking). Platform-specific output:
 
-    macOS:   dist/LabBench.app           (onedir) or dist/LabBench (onefile)
-    Windows: dist/LabBench/LabBench.exe  (onedir) or dist/LabBench.exe (onefile)
-    Linux:   dist/LabBench/LabBench      (onedir) or dist/LabBench (onefile)
+    macOS:   dist/LTB.app           (onedir) or dist/LTB (onefile)
+    Windows: dist/LTB/LTB.exe  (onedir) or dist/LTB.exe (onefile)
+    Linux:   dist/LTB/LTB      (onedir) or dist/LTB (onefile)
 
 Invoke via ``scripts/build_app.py``; don't run pyinstaller on this
 spec directly unless you know what you're doing — the wrapper sets
@@ -25,7 +27,7 @@ from pathlib import Path
 SPEC_DIR = Path(os.environ.get("REPO_ROOT", Path(SPECPATH).parent))
 ONEFILE = os.environ.get("ONEFILE", "0") == "1"
 
-APP_NAME = "LabBench"
+APP_NAME = "LTB"
 ENTRY_POINT = str(SPEC_DIR / "gui" / "main.py")
 
 # Hidden imports PyInstaller's auto-discovery can miss. Keep this list
@@ -124,10 +126,10 @@ if sys.platform == "darwin" and not ONEFILE:
         coll,
         name=f"{APP_NAME}.app",
         icon=None,
-        bundle_identifier="com.u2702a.labbench",
+        bundle_identifier="com.labtestbench.app",
         info_plist={
             "CFBundleName": APP_NAME,
-            "CFBundleDisplayName": "U2702A Lab Bench",
+            "CFBundleDisplayName": "LabTestBench",
             "CFBundleShortVersionString": "0.11.0-alpha",
             "CFBundleVersion": "0.11.0-alpha",
             "NSHighResolutionCapable": "True",

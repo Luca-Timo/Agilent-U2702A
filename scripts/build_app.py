@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build a standalone LabBench executable.
+Build a standalone LTB executable.
 
 Usage:
     python scripts/build_app.py                  # onedir bundle (default)
@@ -9,9 +9,9 @@ Usage:
     python scripts/build_app.py --tests          # run tests before building
 
 Output:
-    macOS:   dist/LabBench.app            (or dist/LabBench for onefile)
-    Windows: dist/LabBench/LabBench.exe   (or dist/LabBench.exe for onefile)
-    Linux:   dist/LabBench/LabBench       (or dist/LabBench for onefile)
+    macOS:   dist/LTB.app            (or dist/LTB for onefile)
+    Windows: dist/LTB/LTB.exe   (or dist/LTB.exe for onefile)
+    Linux:   dist/LTB/LTB       (or dist/LTB for onefile)
 
 Runs locally (developer machine) and in CI — same command, same spec,
 same output layout.
@@ -39,7 +39,7 @@ def run(cmd: list[str], *, env: dict | None = None) -> None:
 
 
 def clean_build_dirs() -> None:
-    for d in ("build/LabBench", "build/__pycache__", "dist"):
+    for d in ("build/LTB", "build/__pycache__", "dist"):
         path = REPO_ROOT / d
         if path.exists():
             print(f"rm -rf {path}")
@@ -101,17 +101,17 @@ def main() -> int:
     print()
     print("Run it:")
     if sys.platform == "darwin" and not args.onefile:
-        print(f"  open {dist / 'LabBench.app'}")
+        print(f"  open {dist / 'LTB.app'}")
     elif sys.platform == "win32":
         if args.onefile:
-            print(f"  {dist / 'LabBench.exe'}")
+            print(f"  {dist / 'LTB.exe'}")
         else:
-            print(f"  {dist / 'LabBench' / 'LabBench.exe'}")
+            print(f"  {dist / 'LTB' / 'LTB.exe'}")
     else:
         if args.onefile:
-            print(f"  {dist / 'LabBench'}")
+            print(f"  {dist / 'LTB'}")
         else:
-            print(f"  {dist / 'LabBench' / 'LabBench'}")
+            print(f"  {dist / 'LTB' / 'LTB'}")
     return 0
 
 

@@ -109,7 +109,7 @@ class _DeviceRow(QFrame):
 class LauncherWindow(QMainWindow):
     """Device picker + window manager. Top-level of the app."""
 
-    WINDOW_TITLE = "Lab Bench — Launcher"
+    WINDOW_TITLE = "LabTestBench — Launcher"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -129,7 +129,7 @@ class LauncherWindow(QMainWindow):
         root.setSpacing(12)
 
         # Header
-        header = QLabel("Lab Bench")
+        header = QLabel("LabTestBench")
         header_font = QFont()
         header_font.setPointSize(18)
         header_font.setBold(True)
@@ -459,8 +459,9 @@ class LauncherWindow(QMainWindow):
 
     def _show_about(self):
         QMessageBox.about(
-            self, "Lab Bench",
-            "<h3>Lab Bench</h3>"
+            self, "LabTestBench",
+            "<h3>LabTestBench</h3>"
+            "<p><em>LTB</em></p>"
             f"<p>Version {getattr(ACTIVE, 'model', '')}</p>"
             "<p>Cross-instrument bench app — oscilloscopes, DMMs, "
             "function generators.</p>"
@@ -472,7 +473,7 @@ class LauncherWindow(QMainWindow):
     def closeEvent(self, event):
         if self._child_windows:
             reply = QMessageBox.question(
-                self, "Quit Lab Bench?",
+                self, "Quit LabTestBench?",
                 f"There {'are' if len(self._child_windows) != 1 else 'is'} "
                 f"{len(self._child_windows)} instrument "
                 f"window{'s' if len(self._child_windows) != 1 else ''} "

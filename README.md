@@ -118,9 +118,9 @@ a GitHub Release with the same bundles.
 
 | OS | Artifact | Run it |
 |---|---|---|
-| macOS (Apple Silicon) | `LabBench-macos-arm64.zip` | unzip, `open LabBench.app` (see macOS note below) |
-| Windows x64 | `LabBench-windows-x64.zip` | unzip, double-click `LabBench.exe` |
-| Linux x64 | `LabBench-linux-x64.tar.gz` | `tar -xzf …`, run `LabBench/LabBench` |
+| macOS (Apple Silicon) | `LTB-macos-arm64.zip` | unzip, `open LTB.app` (see macOS note below) |
+| Windows x64 | `LTB-windows-x64.zip` | unzip, double-click `LTB.exe` |
+| Linux x64 | `LTB-linux-x64.tar.gz` | `tar -xzf …`, run `LTB/LTB` |
 
 **macOS Gatekeeper note.** The CI build isn't signed with an Apple
 Developer ID (costs $99/yr), so the first time you launch it macOS
@@ -128,11 +128,11 @@ refuses with *"Apple could not verify …is free of malware"*. Clear
 the quarantine flag once per download:
 
 ```bash
-xattr -dr com.apple.quarantine ~/Downloads/LabBench.app
-open ~/Downloads/LabBench.app
+xattr -dr com.apple.quarantine ~/Downloads/LTB.app
+open ~/Downloads/LTB.app
 ```
 
-Or right-click `LabBench.app` → hold Option → **Open** → **Open anyway**.
+Or right-click `LTB.app` → hold Option → **Open** → **Open anyway**.
 The app will launch and remember the decision.
 
 ### Build the app locally
@@ -143,9 +143,9 @@ python scripts/build_app.py --clean --tests
 ```
 
 Output lands in `dist/`:
-- macOS: `dist/LabBench.app` (also a raw `dist/LabBench` binary)
-- Windows: `dist/LabBench/LabBench.exe`
-- Linux: `dist/LabBench/LabBench`
+- macOS: `dist/LTB.app` (also a raw `dist/LTB` binary)
+- Windows: `dist/LTB/LTB.exe`
+- Linux: `dist/LTB/LTB`
 
 Flags: `--onefile` produces a single-file executable instead of a
 bundle; `--clean` wipes `build/` and `dist/` first; `--tests` runs

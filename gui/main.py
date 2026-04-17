@@ -22,7 +22,7 @@ def main():
     setup_logging()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Lab Bench")
+    app.setApplicationName("LabTestBench")
     app.setApplicationVersion("0.11.0-alpha")
 
     apply_dark_theme(app)

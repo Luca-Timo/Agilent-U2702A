@@ -41,6 +41,7 @@ __pycache__/
 dist/
 build/u2702a/
 build/LabBench/
+build/LTB/
 build/__pycache__/
 
 #PlatformIO (ESP32-S3 firmware)

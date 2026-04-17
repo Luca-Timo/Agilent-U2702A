@@ -1,14 +1,14 @@
 name: build
 
-# Builds the standalone LabBench app on every push to main (after PR
+# Builds the standalone LTB app on every push to main (after PR
 # merge). Artifacts are attached to the workflow run and downloadable
 # for 30 days. For a proper release, push a ``v*`` tag and this same
 # workflow creates a GitHub Release with the binaries attached.
 #
 # Runs in parallel on three OS runners:
-#   macOS (arm64)   → LabBench.app + .dmg   (Apple Silicon)
-#   Windows x64     → LabBench.exe bundle    (.zip)
-#   Linux   x64     → LabBench directory     (.tar.gz)
+#   macOS (arm64)   → LTB.app + .dmg   (Apple Silicon)
+#   Windows x64     → LTB.exe bundle    (.zip)
+#   Linux   x64     → LTB directory     (.tar.gz)
 
 on:
   push:
@@ -33,15 +33,15 @@ jobs:
         include:
           - name: macos-arm64
             runner: macos-14        # Apple Silicon runner
-            artifact: LabBench-macos-arm64
+            artifact: LTB-macos-arm64
             archive: zip
           - name: windows-x64
             runner: windows-latest
-            artifact: LabBench-windows-x64
+            artifact: LTB-windows-x64
             archive: zip
           - name: linux-x64
             runner: ubuntu-latest
-            artifact: LabBench-linux-x64
+            artifact: LTB-linux-x64
             archive: tar
 
     steps:
@@ -86,38 +86,38 @@ jobs:
         run: |
           echo "--- dist/ ---"
           ls -la dist/ || true
-          echo "--- dist/LabBench/ (if present) ---"
-          ls -la dist/LabBench/ 2>/dev/null | head -20 || true
+          echo "--- dist/LTB/ (if present) ---"
+          ls -la dist/LTB/ 2>/dev/null | head -20 || true
 
       - name: Package macOS .app into .zip
         if: runner.os == 'macOS'
         shell: bash
         run: |
           cd dist
-          zip -r LabBench-macos-arm64.zip LabBench.app
+          zip -r LTB-macos-arm64.zip LTB.app
 
       - name: Package Windows bundle into .zip
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path "${{ github.workspace }}\dist\LabBench" `
-            -DestinationPath "${{ github.workspace }}\dist\LabBench-windows-x64.zip"
+            -Path "${{ github.workspace }}\dist\LTB" `
+            -DestinationPath "${{ github.workspace }}\dist\LTB-windows-x64.zip"
 
       - name: Package Linux bundle into .tar.gz
         if: runner.os == 'Linux'
         shell: bash
         run: |
           cd dist
-          tar -czf LabBench-linux-x64.tar.gz LabBench
+          tar -czf LTB-linux-x64.tar.gz LTB
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
-            dist/LabBench-*.zip
-            dist/LabBench-*.tar.gz
+            dist/LTB-*.zip
+            dist/LTB-*.tar.gz
           if-no-files-found: error
           retention-days: 30
 
@@ -142,5 +142,5 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
           generate_release_notes: true
           files: |
-            artifacts/**/LabBench-*.zip
-            artifacts/**/LabBench-*.tar.gz
+            artifacts/**/LTB-*.zip
+            artifacts/**/LTB-*.tar.gz
