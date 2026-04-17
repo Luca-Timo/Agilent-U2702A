@@ -13,14 +13,17 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtWidgets import QApplication
+from gui.logger import setup_logging
 from gui.theme import apply_dark_theme
 from gui.main_window import MainWindow
 
 
 def main():
+    setup_logging()
+
     app = QApplication(sys.argv)
     app.setApplicationName("Agilent U2702A Oscilloscope")
-    app.setApplicationVersion("0.8.3-alpha")
+    app.setApplicationVersion("0.9.0-alpha")
 
     apply_dark_theme(app)
 

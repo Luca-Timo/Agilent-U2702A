@@ -2379,24 +2379,55 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Auto-save session and clean shutdown."""
+        import logging
+        log = logging.getLogger(__name__)
+
         # Auto-save current state
         from gui.session import gather_state, save_to_file, AUTO_SAVE_PATH
         try:
             state = gather_state(self)
             save_to_file(state, str(AUTO_SAVE_PATH))
-        except Exception:
-            pass  # Don't block exit on save failure
+        except Exception as e:
+            log.warning("Auto-save on exit failed: %s", e)
 
         # Save QSettings
         self._save_qsettings()
 
+        # Stop acquisition and let the worker's loop notice.
         if self._is_running:
             self.sig_stop.emit()
+            # Give the acquisition loop a brief window to exit cleanly
+            # before we tear down signals/thread.
+            QThread.msleep(150)
+
+        # Disconnect worker signals so stale slot deliveries during
+        # teardown don't hit a half-destroyed MainWindow.
+        try:
+            self._worker.waveform_ready.disconnect()
+            self._worker.error_occurred.disconnect()
+            self._worker.status_changed.disconnect()
+            self._worker.init_complete.disconnect()
+            self._worker.fps_update.disconnect()
+            self._worker.trigger_status.disconnect()
+        except (RuntimeError, TypeError):
+            # Already disconnected or never connected — not fatal.
+            pass
 
         if self._bridge:
-            self._bridge.close()
+            try:
+                self._bridge.close()
+            except Exception as e:
+                log.warning("Bridge close on exit failed: %s", e)
 
+        # Quit the thread event loop, wait, fall back to terminate.
         self._acq_thread.quit()
-        self._acq_thread.wait(3000)
+        if not self._acq_thread.wait(2000):
+            log.warning(
+                "Acquisition thread did not exit cleanly; forcing terminate",
+            )
+            self._acq_thread.terminate()
+            self._acq_thread.wait(1000)
+
+        self._worker.deleteLater()
 
         super().closeEvent(event)

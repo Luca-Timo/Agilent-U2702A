@@ -3,13 +3,23 @@ Acquisition worker — QObject running on a background QThread.
 
 Handles SCPI streaming: init sequence, continuous/single waveform
 acquisition, and instrument state management.
+
+Thread safety: channel settings, trigger state, enabled-channel list, and
+the run/mode flags are guarded by ``self._state_lock``. The main thread
+mutates through ``@Slot`` setters; the worker thread snapshots the state
+under the lock at the top of each acquisition and then works with the
+snapshot (no extra locking during the SCPI round-trips).
 """
 
+import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
-from PySide6.QtCore import QObject, Signal, Slot, QThread, QCoreApplication
+from PySide6.QtCore import (
+    QObject, Signal, Slot, QThread, QCoreApplication,
+    QMutex, QMutexLocker,
+)
 
 from instrument.serial_bridge import (
     SerialBridge, BridgeTimeoutError, BridgeCommandError,
@@ -21,6 +31,8 @@ from processing.waveform import (
     find_trigger_crossing,
 )
 from gui.theme import NUM_CHANNELS
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -57,22 +69,52 @@ class AcquisitionWorker(QObject):
     def __init__(self):
         super().__init__()
         self._bridge: Optional[SerialBridge] = None
+
+        # Lock guarding all state shared between the GUI thread (slot writes)
+        # and the worker thread (acquisition loop reads).
+        self._state_lock = QMutex()
+
+        # --- Guarded by _state_lock ---
         self._running = False
         self._mode = "stopped"  # "stopped", "continuous", "single"
-
-        # Per-channel settings (updated from GUI)
         self._channels: dict[int, ChannelSettings] = {}
         self._enabled_channels: list[int] = [1]
         self._t_per_div: float = 1e-3
-
-        # Trigger settings (for software trigger alignment)
         self._trigger_level: float = 0.0
         self._trigger_slope: str = "POS"
         self._trigger_source: str = "CHAN1"
+        # --- End guarded section ---
 
-        # FPS tracking
+        # FPS tracking (worker-thread-only)
         self._frame_count = 0
         self._fps_timer = 0.0
+
+    # --- Snapshot helpers ---
+
+    def _snapshot_acq_state(self) -> tuple:
+        """Atomically read the state the acquisition loop needs per frame.
+
+        Returns a (enabled_channels, t_per_div, trigger_level, trigger_slope,
+        trigger_source, channels_copy) tuple with deep-copied mutable parts
+        so the loop does not race with slot writes.
+        """
+        with QMutexLocker(self._state_lock):
+            return (
+                list(self._enabled_channels),
+                self._t_per_div,
+                self._trigger_level,
+                self._trigger_slope,
+                self._trigger_source,
+                {ch: replace(s) for ch, s in self._channels.items()},
+            )
+
+    def _is_running(self) -> bool:
+        with QMutexLocker(self._state_lock):
+            return self._running
+
+    def _mode_is(self, mode: str) -> bool:
+        with QMutexLocker(self._state_lock):
+            return self._mode == mode
 
     @property
     def bridge(self) -> Optional[SerialBridge]:
@@ -178,153 +220,120 @@ class AcquisitionWorker(QObject):
         if "TRIGGER:EDGE:COUPLING?" in raw:
             parsed["trigger"]["coupling"] = raw["TRIGGER:EDGE:COUPLING?"].strip()
 
-        # Store trigger settings locally for software trigger alignment
-        if "level" in parsed["trigger"]:
-            self._trigger_level = parsed["trigger"]["level"]
-        if "slope" in parsed["trigger"]:
-            self._trigger_slope = parsed["trigger"]["slope"]
-        if "source" in parsed["trigger"]:
-            self._trigger_source = parsed["trigger"]["source"]
+        # Store trigger settings locally for software trigger alignment.
+        with QMutexLocker(self._state_lock):
+            if "level" in parsed["trigger"]:
+                self._trigger_level = parsed["trigger"]["level"]
+            if "slope" in parsed["trigger"]:
+                self._trigger_slope = parsed["trigger"]["slope"]
+            if "source" in parsed["trigger"]:
+                self._trigger_source = parsed["trigger"]["source"]
 
         return parsed
 
     # --- Channel settings (from GUI) ---
 
+    def _set_channel_field(self, ch: int, **kwargs):
+        """Update one or more fields on a channel under the state lock."""
+        with QMutexLocker(self._state_lock):
+            if ch not in self._channels:
+                self._channels[ch] = ChannelSettings()
+            for k, v in kwargs.items():
+                setattr(self._channels[ch], k, v)
+            # If 'enabled' changed, recompute enabled_channels
+            if "enabled" in kwargs:
+                self._enabled_channels = [
+                    c for c, s in self._channels.items() if s.enabled
+                ]
+
+    def _guarded_write(self, command: str, label: str, timeout: float = 2.0):
+        """Send one SCPI write, log+emit on failure. Returns True on success."""
+        if not self._bridge or not self._bridge.is_open:
+            return False
+        try:
+            self._bridge.write(command, timeout=timeout)
+            return True
+        except SerialBridgeError as e:
+            logger.warning("%s failed: %s", label, e)
+            self.error_occurred.emit(f"{label} failed: {e}")
+            return False
+
     @Slot(int, bool)
     def set_channel_enabled(self, ch: int, enabled: bool):
-        if ch not in self._channels:
-            self._channels[ch] = ChannelSettings()
-        self._channels[ch].enabled = enabled
-        self._enabled_channels = [
-            c for c, s in self._channels.items() if s.enabled
-        ]
+        self._set_channel_field(ch, enabled=enabled)
 
     @Slot(int, float)
     def set_vdiv(self, ch: int, value: float):
-        if ch not in self._channels:
-            self._channels[ch] = ChannelSettings()
-        self._channels[ch].v_per_div = value
-
-        # Send to instrument
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.channel_scale_set(ch, value))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set V/div failed: {e}")
+        self._set_channel_field(ch, v_per_div=value)
+        self._guarded_write(protocol.channel_scale_set(ch, value), f"CH{ch} V/div")
 
     @Slot(int, float)
     def set_offset(self, ch: int, value: float):
-        if ch not in self._channels:
-            self._channels[ch] = ChannelSettings()
-        self._channels[ch].offset = value
-
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.channel_offset_set(ch, value))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set offset failed: {e}")
+        self._set_channel_field(ch, offset=value)
+        self._guarded_write(protocol.channel_offset_set(ch, value), f"CH{ch} offset")
 
     @Slot(int, str)
     def set_coupling(self, ch: int, coupling: str):
-        if ch not in self._channels:
-            self._channels[ch] = ChannelSettings()
-        self._channels[ch].coupling = coupling
-
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.channel_coupling_set(ch, coupling))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set coupling failed: {e}")
+        self._set_channel_field(ch, coupling=coupling)
+        self._guarded_write(protocol.channel_coupling_set(ch, coupling), f"CH{ch} coupling")
 
     @Slot(int, bool)
     def set_bwlimit(self, ch: int, enabled: bool):
-        if ch not in self._channels:
-            self._channels[ch] = ChannelSettings()
-        self._channels[ch].bw_limit = enabled
-
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.channel_bwlimit_set(ch, enabled))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set BW limit failed: {e}")
+        self._set_channel_field(ch, bw_limit=enabled)
+        self._guarded_write(protocol.channel_bwlimit_set(ch, enabled), f"CH{ch} BW limit")
 
     @Slot(int, float)
     def set_probe(self, ch: int, factor: float):
-        if ch not in self._channels:
-            self._channels[ch] = ChannelSettings()
-        self._channels[ch].probe_factor = factor
-        # Probe is software-only, no SCPI command
+        # Probe is software-only, no SCPI command.
+        self._set_channel_field(ch, probe_factor=factor)
 
     @Slot(float)
     def set_tdiv(self, value: float):
-        self._t_per_div = value
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.timebase_scale_set(value))
-                self._bridge.write(protocol.timebase_position_set(0))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set T/div failed: {e}")
+        with QMutexLocker(self._state_lock):
+            self._t_per_div = value
+        if self._guarded_write(protocol.timebase_scale_set(value), "T/div"):
+            self._guarded_write(protocol.timebase_position_set(0), "T position")
 
     @Slot(float)
     def set_position(self, value: float):
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.timebase_position_set(value))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set position failed: {e}")
+        self._guarded_write(protocol.timebase_position_set(value), "T position")
 
     @Slot(float)
     def set_trigger_level(self, value: float):
-        self._trigger_level = value
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.trigger_edge_level_set(value))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set trigger level failed: {e}")
+        with QMutexLocker(self._state_lock):
+            self._trigger_level = value
+        self._guarded_write(protocol.trigger_edge_level_set(value), "Trigger level")
 
     @Slot(str)
     def set_trigger_source(self, source: str):
-        self._trigger_source = source
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.trigger_edge_source_set(source))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set trigger source failed: {e}")
+        with QMutexLocker(self._state_lock):
+            self._trigger_source = source
+        self._guarded_write(protocol.trigger_edge_source_set(source), "Trigger source")
 
     @Slot(str)
     def set_trigger_slope(self, slope: str):
-        self._trigger_slope = slope
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.trigger_edge_slope_set(slope))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set trigger slope failed: {e}")
+        with QMutexLocker(self._state_lock):
+            self._trigger_slope = slope
+        self._guarded_write(protocol.trigger_edge_slope_set(slope), "Trigger slope")
 
     @Slot(str)
     def set_trigger_sweep(self, mode: str):
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(protocol.trigger_sweep_set(mode))
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set trigger sweep failed: {e}")
+        self._guarded_write(protocol.trigger_sweep_set(mode), "Trigger sweep")
 
     @Slot(str)
     def set_trigger_coupling(self, coupling: str):
-        if self._bridge and self._bridge.is_open:
-            try:
-                self._bridge.write(
-                    protocol.trigger_edge_coupling_set(coupling)
-                )
-            except SerialBridgeError as e:
-                self.error_occurred.emit(f"Set trigger coupling failed: {e}")
+        self._guarded_write(
+            protocol.trigger_edge_coupling_set(coupling), "Trigger coupling",
+        )
 
     # --- Acquisition control ---
 
     @Slot()
     def start_continuous(self):
         """Start continuous acquisition."""
-        self._mode = "continuous"
-        self._running = True
+        with QMutexLocker(self._state_lock):
+            self._mode = "continuous"
+            self._running = True
         self._frame_count = 0
         self._fps_timer = time.monotonic()
         self._acquisition_loop()
@@ -332,22 +341,27 @@ class AcquisitionWorker(QObject):
     @Slot()
     def start_single(self):
         """Run a single acquisition."""
-        self._mode = "single"
-        self._running = True
-        self._acquire_all_channels()
-        self._running = False
-        self._mode = "stopped"
+        with QMutexLocker(self._state_lock):
+            self._mode = "single"
+            self._running = True
+        try:
+            self._acquire_all_channels()
+        finally:
+            with QMutexLocker(self._state_lock):
+                self._running = False
+                self._mode = "stopped"
 
     @Slot()
     def stop(self):
-        """Stop acquisition."""
-        self._running = False
-        self._mode = "stopped"
+        """Stop acquisition (called from the GUI thread)."""
+        with QMutexLocker(self._state_lock):
+            self._running = False
+            self._mode = "stopped"
         self.trigger_status.emit("READY")
 
     def _acquisition_loop(self):
         """Main continuous acquisition loop."""
-        while self._running and self._mode == "continuous":
+        while self._is_running() and self._mode_is("continuous"):
             self._acquire_all_channels()
 
             # FPS tracking
@@ -380,87 +394,99 @@ class AcquisitionWorker(QObject):
             self.stop()
             return
 
-        try:
-            # Enable all needed channels
-            for ch in self._enabled_channels:
+        # Snapshot state under the lock so slot writes during acquisition
+        # don't cause mid-frame drift.
+        (enabled_channels, t_per_div, trigger_level, trigger_slope,
+         trigger_source, channels_snapshot) = self._snapshot_acq_state()
+
+        # Enable all needed channels. If any write fails, abort early
+        # so we don't read from an inconsistent capture.
+        for ch in enabled_channels:
+            try:
                 self._bridge.write(
-                    protocol.channel_display_set(ch, True), timeout=1.0
+                    protocol.channel_display_set(ch, True), timeout=1.0,
                 )
+            except SerialBridgeError as e:
+                logger.warning("Enable CH%d failed: %s", ch, e)
+                self.error_occurred.emit(f"Enable CH{ch} failed: {e}")
+                return
 
-            # Trigger ONE acquisition for all channels
-            self.trigger_status.emit("ARMED")
+        # Trigger ONE acquisition for all channels
+        self.trigger_status.emit("ARMED")
+        try:
             self._bridge.write(protocol.SINGLE, timeout=1.0)
-
-            # Determine trigger source channel number (e.g. "CHAN1" → 1)
-            trig_ch = None
-            if self._trigger_source.startswith("CHAN"):
-                try:
-                    trig_ch = int(self._trigger_source[4:])
-                except ValueError:
-                    trig_ch = None
-
-            # Order channels: trigger source first (so we find the
-            # crossing before building time axes for other channels).
-            # If trigger source is not enabled, still read it for
-            # trigger detection but don't emit its waveform.
-            ordered = list(self._enabled_channels)
-            trig_ch_hidden = False
-            if trig_ch is not None and trig_ch not in ordered:
-                ordered.insert(0, trig_ch)
-                trig_ch_hidden = True  # Read for trigger only
-            elif trig_ch in ordered:
-                ordered.remove(trig_ch)
-                ordered.insert(0, trig_ch)
-
-            trigger_sample = None  # shared across all channels
-
-            for i, ch in enumerate(ordered):
-                if not self._running:
-                    break
-
-                try:
-                    waveform = self._read_channel_data(
-                        ch, poll=(i == 0),
-                        trigger_sample=trigger_sample,
-                    )
-                    if waveform:
-                        # On the trigger source channel, detect the
-                        # crossing and remember it for other channels.
-                        if ch == trig_ch and trigger_sample is None:
-                            # Adjust trigger level by channel offset —
-                            # voltage data has offset baked in, so the
-                            # crossing level must match.
-                            adjusted_level = (self._trigger_level
-                                              + waveform.offset)
-                            trigger_sample = find_trigger_crossing(
-                                waveform.voltage,
-                                adjusted_level,
-                                self._trigger_slope,
-                            )
-                            if trigger_sample is not None:
-                                self.trigger_status.emit("TRIG'D")
-                                waveform.trigger_sample = trigger_sample
-                                # Rebuild this channel's time axis with
-                                # the detected trigger position.
-                                waveform.time_axis = make_time_axis(
-                                    len(waveform.raw_adc),
-                                    self._t_per_div,
-                                    trigger_sample=trigger_sample,
-                                )
-                            else:
-                                self.trigger_status.emit("AUTO")
-
-                        # Only emit waveform for enabled (visible) channels
-                        if not (ch == trig_ch and trig_ch_hidden):
-                            self.waveform_ready.emit(waveform)
-                except SerialBridgeError as e:
-                    self.error_occurred.emit(f"CH{ch} read failed: {e}")
-
         except SerialBridgeError as e:
-            self.error_occurred.emit(f"Acquisition failed: {e}")
+            logger.warning(":SINGLE failed: %s", e)
+            self.error_occurred.emit(f"Trigger failed: {e}")
+            return
+
+        # Determine trigger source channel number (e.g. "CHAN1" → 1)
+        trig_ch = None
+        if trigger_source.startswith("CHAN"):
+            try:
+                trig_ch = int(trigger_source[4:])
+            except ValueError:
+                trig_ch = None
+
+        # Order channels: trigger source first (so we find the crossing
+        # before building time axes for other channels). If trigger
+        # source is not enabled, still read it for trigger detection but
+        # don't emit its waveform.
+        ordered = list(enabled_channels)
+        trig_ch_hidden = False
+        if trig_ch is not None and trig_ch not in ordered:
+            ordered.insert(0, trig_ch)
+            trig_ch_hidden = True  # Read for trigger only
+        elif trig_ch in ordered:
+            ordered.remove(trig_ch)
+            ordered.insert(0, trig_ch)
+
+        trigger_sample = None  # shared across all channels
+
+        for i, ch in enumerate(ordered):
+            if not self._is_running():
+                break
+
+            try:
+                waveform = self._read_channel_data(
+                    ch, poll=(i == 0),
+                    trigger_sample=trigger_sample,
+                    settings=channels_snapshot.get(ch, ChannelSettings()),
+                    t_per_div=t_per_div,
+                )
+                if not waveform:
+                    continue
+
+                # On the trigger source channel, detect the crossing
+                # and remember it for other channels.
+                if ch == trig_ch and trigger_sample is None:
+                    # voltage has offset baked in, so the crossing level must match.
+                    adjusted_level = trigger_level + waveform.offset
+                    trigger_sample = find_trigger_crossing(
+                        waveform.voltage, adjusted_level, trigger_slope,
+                    )
+                    if trigger_sample is not None:
+                        self.trigger_status.emit("TRIG'D")
+                        waveform.trigger_sample = trigger_sample
+                        waveform.time_axis = make_time_axis(
+                            len(waveform.raw_adc), t_per_div,
+                            trigger_sample=trigger_sample,
+                        )
+                    else:
+                        self.trigger_status.emit("AUTO")
+
+                # Only emit waveform for enabled (visible) channels
+                if not (ch == trig_ch and trig_ch_hidden):
+                    self.waveform_ready.emit(waveform)
+            except SerialBridgeError as e:
+                logger.warning("CH%d read failed: %s", ch, e)
+                self.error_occurred.emit(f"CH{ch} read failed: {e}")
 
     def _read_channel_data(self, ch: int, poll: bool = True,
-                           trigger_sample: int | None = None) -> Optional[WaveformData]:
+                           trigger_sample: Optional[int] = None,
+                           settings: Optional[ChannelSettings] = None,
+                           t_per_div: Optional[float] = None,
+                           ) -> Optional[WaveformData]:
         """Read waveform data for one channel from the current capture.
 
         Args:
@@ -468,16 +494,35 @@ class AcquisitionWorker(QObject):
             poll: If True, poll WAV:DATA? until data is ready (for first
                   channel after :SINGLE). If False, data should already be
                   available (subsequent channels from same capture).
+            trigger_sample: Shared trigger-sample index for time-axis alignment.
+            settings: Snapshot of the channel settings (pass from the
+                acquisition loop; avoids touching shared state).
+            t_per_div: Snapshot of the timebase scale.
         """
-        settings = self._channels.get(ch, ChannelSettings())
+        if settings is None:
+            # Fallback: read settings under lock (e.g. for single-channel callers)
+            with QMutexLocker(self._state_lock):
+                settings = replace(
+                    self._channels.get(ch, ChannelSettings())
+                )
+                if t_per_div is None:
+                    t_per_div = self._t_per_div
+        elif t_per_div is None:
+            with QMutexLocker(self._state_lock):
+                t_per_div = self._t_per_div
 
         # Select channel source
-        self._bridge.write(protocol.wav_source_set(ch), timeout=1.0)
+        try:
+            self._bridge.write(protocol.wav_source_set(ch), timeout=1.0)
+        except SerialBridgeError as e:
+            logger.warning("WAV:SOUR CH%d failed: %s", ch, e)
+            self.error_occurred.emit(f"Select CH{ch} failed: {e}")
+            return None
 
         # Poll WAV:DATA? — returns "00" until ready, then full data
         max_polls = 50 if poll else 10
         for _ in range(max_polls):
-            if not self._running:
+            if not self._is_running():
                 return None
 
             try:
@@ -493,16 +538,13 @@ class AcquisitionWorker(QObject):
                 # Got real waveform data
                 raw_adc = parse_wav_data(data)
                 voltage = adc_to_voltage(
-                    raw_adc,
-                    settings.v_per_div,
-                    settings.offset,
+                    raw_adc, settings.v_per_div, settings.offset,
                 )
 
-                # Build time axis — if trigger_sample is known
-                # (from the trigger source channel), all channels
-                # use it so they stay aligned.
+                # Build time axis — if trigger_sample is known, all
+                # channels use it so they stay aligned.
                 time_axis = make_time_axis(
-                    len(raw_adc), self._t_per_div,
+                    len(raw_adc), t_per_div,
                     trigger_sample=trigger_sample,
                 )
 
@@ -513,7 +555,7 @@ class AcquisitionWorker(QObject):
                     time_axis=time_axis,
                     v_per_div=settings.v_per_div,
                     offset=settings.offset,
-                    t_per_div=self._t_per_div,
+                    t_per_div=t_per_div,
                     probe_factor=settings.probe_factor,
                     timestamp=time.monotonic(),
                 )

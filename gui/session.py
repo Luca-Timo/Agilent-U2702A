@@ -6,12 +6,18 @@ Functions:
     apply_state(win, state)      Restore state from a dict into all panels
     save_to_file(state, path)    Write state dict to a JSON file
     load_from_file(path) -> dict Read state dict from a JSON file
+
+On load, the session's ``version`` field is checked and the payload is
+passed through registered migrators so older sessions upgrade silently.
 """
 
 import json
+import logging
 from pathlib import Path
 
-SESSION_VERSION = "0.8.3"
+logger = logging.getLogger(__name__)
+
+SESSION_VERSION = "0.9.0"
 
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
@@ -159,6 +165,51 @@ def gather_state(win) -> dict:
     }
 
 
+# --- Version migration ---
+
+# Ordered list of (from_version, to_version, migrator) tuples. The migrator
+# takes the state dict and returns a new state dict upgraded one step.
+# Add new entries here when bumping SESSION_VERSION.
+_MIGRATIONS: list[tuple[str, str, "callable"]] = []
+
+
+def _migrate_0_8_3_to_0_9_0(state: dict) -> dict:
+    """No schema changes — just tag the payload with the new version."""
+    state = dict(state)
+    state["version"] = "0.9.0"
+    return state
+
+
+_MIGRATIONS.append(("0.8.3", "0.9.0", _migrate_0_8_3_to_0_9_0))
+
+
+def _migrate(state: dict) -> dict:
+    """Upgrade ``state`` through the migration chain to ``SESSION_VERSION``.
+
+    Missing version is treated as 0.8.3 (the version before migrators were
+    introduced). Newer-than-current versions are accepted best-effort with
+    a warning — unknown keys are simply ignored by readers.
+    """
+    version = state.get("version") or "0.8.3"
+    if version == SESSION_VERSION:
+        return state
+    # Find the chain of migrators that carries version → SESSION_VERSION.
+    current = version
+    for frm, to, func in _MIGRATIONS:
+        if current == frm:
+            logger.info("Migrating session: %s → %s", frm, to)
+            state = func(state)
+            current = to
+            if current == SESSION_VERSION:
+                return state
+    if current != SESSION_VERSION:
+        logger.warning(
+            "Session version %s could not be migrated to %s; "
+            "applying best-effort.", version, SESSION_VERSION,
+        )
+    return state
+
+
 def apply_state(win, state: dict, restore_geometry: bool = True):
     """Restore GUI state from a session dict into all MainWindow panels.
 
@@ -173,11 +224,22 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
     if not state:
         return
 
+    # Migrate older sessions to the current schema first.
+    state = _migrate(state)
+
     # --- Channels ---
     channels = state.get("channels", {})
     for ch_str, ch_data in channels.items():
-        ch = int(ch_str)
+        try:
+            ch = int(ch_str)
+        except (ValueError, TypeError):
+            logger.warning("Skipping non-integer channel key %r", ch_str)
+            continue
         if ch < 1 or ch > NUM_CHANNELS:
+            logger.warning(
+                "Ignoring saved settings for channel %d "
+                "(hardware has %d channels)", ch, NUM_CHANNELS,
+            )
             continue
 
         # Set channel panel state (handles UI widget updates)
@@ -394,9 +456,16 @@ def load_from_file(path: str) -> dict:
     """Read session state dict from a JSON file.
 
     Returns empty dict if file does not exist or is malformed.
+    Logs the reason so users can diagnose missing-settings issues.
     """
     try:
         with open(path, "r") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        logger.warning("Session file %s is malformed: %s", path, e)
+        return {}
+    except OSError as e:
+        logger.warning("Cannot read session file %s: %s", path, e)
         return {}
