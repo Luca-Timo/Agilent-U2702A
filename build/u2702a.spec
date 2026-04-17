@@ -128,8 +128,8 @@ if sys.platform == "darwin" and not ONEFILE:
         info_plist={
             "CFBundleName": APP_NAME,
             "CFBundleDisplayName": "U2702A Lab Bench",
-            "CFBundleShortVersionString": "0.10.0-alpha",
-            "CFBundleVersion": "0.10.0-alpha",
+            "CFBundleShortVersionString": "0.11.0-alpha",
+            "CFBundleVersion": "0.11.0-alpha",
             "NSHighResolutionCapable": "True",
         },
     )

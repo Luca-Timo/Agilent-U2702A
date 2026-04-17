@@ -23,7 +23,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Lab Bench")
-    app.setApplicationVersion("0.10.0-alpha")
+    app.setApplicationVersion("0.11.0-alpha")
 
     apply_dark_theme(app)
 

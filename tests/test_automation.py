@@ -77,6 +77,50 @@ class TestLabSession(unittest.TestCase):
             self.assertGreaterEqual(len(s_result.waveforms), 1)
             self.assertAlmostEqual(d_reading.primary, 3.3, delta=0.5)
 
+    def test_session_hosts_scope_dmm_and_funcgen_simultaneously(self):
+        """The full lab bench: three different instrument kinds in
+        one process, each emitting its own AcquisitionResult shape.
+        """
+        from processing.acquisition_result import (
+            GeneratorState, MeterReading,
+        )
+        from processing.waveform import WaveformData
+
+        with LabSession() as lab:
+            scope = lab.open("U2702A", demo=True)
+            dmm = lab.open("Generic-DMM", demo=True)
+            gen = lab.open("33120A", demo=True)
+            self.assertEqual(len(lab.drivers), 3)
+
+            # Drive each independently — settings on one must not
+            # leak into another.
+            scope.apply_setting("channel.1.vdiv", 1.0)
+            dmm.apply_setting("mode", "DCV")
+            gen.apply_setting("waveform", "TRI")
+            gen.apply_setting("frequency", 500.0)
+            gen.apply_setting("amplitude", 3.0)
+            gen.apply_setting("output_enabled", True)
+
+            s_result = scope.acquire()
+            d_reading = dmm.acquire()
+            g_state = gen.acquire()
+
+            # Each driver emits its own result type.
+            self.assertTrue(s_result.waveforms)
+            self.assertIsInstance(s_result.waveforms[0], WaveformData)
+            self.assertIsInstance(d_reading, MeterReading)
+            self.assertIsInstance(g_state, GeneratorState)
+
+            # Func-gen state roundtrips.
+            self.assertTrue(g_state.output_enabled)
+            self.assertEqual(g_state.setpoints["waveform"], "TRI")
+            self.assertAlmostEqual(g_state.setpoints["frequency"], 500.0)
+            self.assertAlmostEqual(g_state.setpoints["amplitude"], 3.0)
+
+            # Settings on the func-gen didn't touch the scope or DMM.
+            self.assertEqual(scope.read_setting("channel.1.vdiv"), 1.0)
+            self.assertEqual(dmm.read_setting("mode"), "DCV")
+
 
 class TestActionRecorder(unittest.TestCase):
     def _driver(self):

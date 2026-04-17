@@ -2,7 +2,7 @@
 
 A macOS desktop application for the Agilent U2702A USB oscilloscope, built with PySide6 and PyQtGraph. Uses an ESP32-S3 as a USB bridge to bypass Apple Silicon USB driver limitations.
 
-## Current Version: 0.10.0-alpha
+## Current Version: 0.11.0-alpha
 
 ### Features
 - Real-time dual-channel waveform display with dark theme
@@ -159,12 +159,35 @@ Python script with no Qt loaded:
 ```python
 from automation import LabSession
 with LabSession() as lab:
-    scope = lab.open("U2702A", demo=True)      # or port="/dev/cu.usbserial-…"
+    # Any registered model; demo=True works without hardware.
+    scope = lab.open("U2702A", demo=True)
     scope.apply_setting("channel.1.vdiv", 0.5)
-    scope.apply_setting("trigger.level", 1.0)
     result = scope.acquire()
     print(result.waveforms[0].measurements["vpp"])
+
+    # Multiple instruments in one session — the lab-bench case.
+    dmm  = lab.open("Generic-DMM", demo=True)
+    gen  = lab.open("33120A",      demo=True)
+    gen.apply_setting("waveform", "SIN")
+    gen.apply_setting("frequency", 1000.0)
+    gen.apply_setting("amplitude", 2.0)
+    gen.apply_setting("output_enabled", True)
+    print(dmm.acquire().primary, "V")
+    print(gen.acquire().setpoints["waveform"])
 ```
+
+### Registered instruments
+
+| Model | Kind | Transport | Driver |
+|---|---|---|---|
+| Agilent U2702A | Oscilloscope (2ch, 8-bit, 1256 samples) | USB via ESP32-S3 bridge | `instrument/drivers/u2702a.py` |
+| Generic-DMM | Digital multimeter (SCPI `MEAS:*?`) | Any serial | `instrument/drivers/generic_dmm.py` |
+| Agilent 33120A | Function generator (15 MHz, sine/square/tri/ramp/noise/DC) | RS-232 via USB-RS232 adapter | `instrument/drivers/agilent_33120a.py` |
+
+Adding a new instrument is typically: write a preset in `config/presets/`,
+a driver in `instrument/drivers/`, a layout in `gui/layouts/` if its UI
+needs to be different, and register both in `config/__init__.py` and
+`automation/session.py`. See the existing three for the pattern.
 
 ## Continuous integration
 
