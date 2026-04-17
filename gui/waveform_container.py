@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from gui.theme import (
     BG_PLOT, GRID_COLOR, TEXT_DIM, NUM_CHANNELS, channel_color,
-    format_vdiv, MATH_COLOR, MATH_CH,
+    format_vdiv, format_frequency, MATH_COLOR, MATH_CH,
 )
 from gui.waveform_widget import WaveformWidget
 from processing.waveform import WaveformData
@@ -919,7 +919,104 @@ class WaveformContainer(QWidget):
         # sample points visible.
         w._fft_trace = w.plot(pen=pg.mkPen("#ffffff", width=1.2))
         w.setMinimumHeight(120)
+
+        # --- Hover readout: vertical crosshair + freq/mag label ---
+        # Snaps to the nearest FFT bin (x only — magnitude is taken
+        # from the sample at that index rather than the mouse's y).
+        hover_pen = pg.mkPen("#ffaa00", width=1, style=Qt.PenStyle.DashLine)
+        w._hover_vline = pg.InfiniteLine(
+            angle=90, movable=False, pen=hover_pen,
+        )
+        w._hover_vline.setVisible(False)
+        w.addItem(w._hover_vline, ignoreBounds=True)
+
+        w._hover_dot = pg.ScatterPlotItem(
+            size=8,
+            pen=pg.mkPen("#ffaa00", width=1.5),
+            brush=pg.mkBrush("#ffaa00"),
+        )
+        w._hover_dot.setVisible(False)
+        w.addItem(w._hover_dot, ignoreBounds=True)
+
+        w._hover_text = pg.TextItem(
+            text="", anchor=(0, 1), color=pg.mkColor("#ffcc66"),
+            fill=pg.mkBrush(0, 0, 0, 180),
+            border=pg.mkPen("#ffaa00", width=1),
+        )
+        w._hover_text.setVisible(False)
+        w.addItem(w._hover_text, ignoreBounds=True)
+
+        # sigMouseMoved emits scene coordinates; we map to data coords
+        # inside the handler. Connect via the scene so we get events
+        # even when the mouse is over the axes.
+        w.scene().sigMouseMoved.connect(
+            lambda pos, _w=w: self._on_fft_hover(_w, pos)
+        )
+        # Hide on leave — sigMouseMoved stops firing when the cursor
+        # exits the widget, but the last-seen position leaves the
+        # crosshair on screen. An event filter catches Leave.
+        w.installEventFilter(self)
+        w._hover_active = False
+
         return w
+
+    def eventFilter(self, obj, event):
+        """Hide the FFT hover readout when the mouse leaves the pane."""
+        from PySide6.QtCore import QEvent
+        if (self._fft_widget is not None
+                and obj is self._fft_widget
+                and event.type() == QEvent.Type.Leave):
+            self._hide_fft_hover()
+        return super().eventFilter(obj, event)
+
+    def _on_fft_hover(self, widget: pg.PlotWidget, scene_pos):
+        """Snap to the nearest FFT bin and show freq + magnitude."""
+        trace = getattr(widget, "_fft_trace", None)
+        if trace is None:
+            self._hide_fft_hover()
+            return
+        freqs, mags = trace.getData()
+        if freqs is None or len(freqs) == 0:
+            self._hide_fft_hover()
+            return
+
+        vb = widget.plotItem.vb
+        if not vb.sceneBoundingRect().contains(scene_pos):
+            self._hide_fft_hover()
+            return
+
+        data_pt = vb.mapSceneToView(scene_pos)
+        # Snap to the nearest FFT bin (frequencies are monotonic and
+        # uniformly-ish spaced — ``searchsorted`` is O(log n)).
+        x = data_pt.x()
+        idx = int(np.clip(np.searchsorted(freqs, x), 1, len(freqs) - 1))
+        # searchsorted returns the insertion point; pick whichever of
+        # the two neighbours is closer.
+        if abs(freqs[idx - 1] - x) < abs(freqs[idx] - x):
+            idx -= 1
+        sf = float(freqs[idx])
+        sm = float(mags[idx])
+
+        widget._hover_vline.setPos(sf)
+        widget._hover_vline.setVisible(True)
+        widget._hover_dot.setData([sf], [sm])
+        widget._hover_dot.setVisible(True)
+
+        unit = "dBV" if self._fft_scale == "dbv" else ""
+        label = f"{format_frequency(sf)}\n{sm:.2f} {unit}".rstrip()
+        widget._hover_text.setText(label)
+        widget._hover_text.setPos(sf, sm)
+        widget._hover_text.setVisible(True)
+        widget._hover_active = True
+
+    def _hide_fft_hover(self):
+        w = self._fft_widget
+        if w is None or not getattr(w, "_hover_active", False):
+            return
+        w._hover_vline.setVisible(False)
+        w._hover_dot.setVisible(False)
+        w._hover_text.setVisible(False)
+        w._hover_active = False
 
     # --- Math (virtual channel MATH_CH on WaveformWidget) ---
 
