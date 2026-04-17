@@ -165,6 +165,36 @@ class SettingsDialog(QDialog):
         knob_group.setLayout(knob_layout)
         controls_layout.addWidget(knob_group)
 
+        # --- Connection settings ---
+        from gui.app_settings import SETTINGS as _APP_SETTINGS
+
+        conn_group = QGroupBox("Connection")
+        conn_layout = QVBoxLayout()
+
+        self._discovery_checkbox = QCheckBox("Auto-detect instruments via *IDN?")
+        self._discovery_checkbox.setChecked(_APP_SETTINGS.auto_discovery_enabled)
+        self._discovery_checkbox.setToolTip(
+            "When enabled, the connection dialog probes every serial\n"
+            "port with *IDN? to identify the attached instrument.\n"
+            "Disable if probing interferes with other devices on the\n"
+            "bus or if it slows down the dialog open."
+        )
+        self._discovery_checkbox.toggled.connect(self._on_discovery_toggled)
+        conn_layout.addWidget(self._discovery_checkbox)
+
+        discovery_note = QLabel(
+            "When disabled, you pick the instrument manually from the\n"
+            "registry and the port from the list — no probe traffic is\n"
+            "sent to any port."
+        )
+        discovery_note.setStyleSheet(
+            "color: #666666; font-size: 10px; padding-top: 4px;"
+        )
+        conn_layout.addWidget(discovery_note)
+
+        conn_group.setLayout(conn_layout)
+        controls_layout.addWidget(conn_group)
+
         controls_layout.addStretch()
         tabs.addTab(controls_tab, "Controls")
 
@@ -248,6 +278,10 @@ class SettingsDialog(QDialog):
     def _on_scroll_toggled(self, checked: bool):
         self._knob_scroll_enabled = checked
         self.knob_scroll_changed.emit(checked)
+
+    def _on_discovery_toggled(self, checked: bool):
+        from gui.app_settings import SETTINGS
+        SETTINGS.auto_discovery_enabled = bool(checked)
 
     _STANDARD_PROBES = {"1x", "10x", "20x", "50x", "100x"}
 

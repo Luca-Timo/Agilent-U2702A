@@ -25,6 +25,12 @@ def _knob_scroll_enabled() -> bool:
     from gui.app_settings import SETTINGS
     return SETTINGS.knob_scroll_enabled
 
+
+def _auto_discovery_enabled() -> bool:
+    """Read the app-wide auto-discovery setting."""
+    from gui.app_settings import SETTINGS
+    return SETTINGS.auto_discovery_enabled
+
 # Auto-save location
 CONFIG_DIR = Path.home() / ".config" / "U2702A"
 AUTO_SAVE_PATH = CONFIG_DIR / "last_session.json"
@@ -66,6 +72,7 @@ def default_state() -> dict:
             "dmm_relative": False,
             "dmm_range_locked": False,
             "knob_scroll": False,
+            "auto_discovery": True,
             "averaging_count": 0,
             "split_view": False,
             "fft_enabled": False,
@@ -141,6 +148,7 @@ def gather_state(win) -> dict:
         "dmm_relative": win._rel_active,
         "dmm_range_locked": win._range_locked,
         "knob_scroll": _knob_scroll_enabled(),
+        "auto_discovery": _auto_discovery_enabled(),
         "averaging_count": win._utility_panel.averaging_count,
         "split_view": win._container.mode == "split",
         "fft_enabled": win._fft_enabled,
@@ -390,6 +398,10 @@ def apply_state(win, state: dict, restore_geometry: bool = True):
 
     knob_scroll = disp.get("knob_scroll", True)
     RotaryKnob.set_scroll_enabled(knob_scroll)
+
+    # auto-discovery on/off (for the connection dialog)
+    from gui.app_settings import SETTINGS as _APP_SETTINGS
+    _APP_SETTINGS.auto_discovery_enabled = bool(disp.get("auto_discovery", True))
 
     avg_count = disp.get("averaging_count", 0)
     win._utility_panel.set_averaging(avg_count)

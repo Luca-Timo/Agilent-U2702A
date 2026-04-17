@@ -19,6 +19,7 @@ from typing import Optional
 
 from config import REGISTRY, InstrumentConfig
 from instrument.demo_bridge import DemoBridge
+from instrument.discovery import DiscoveredInstrument, discover
 from instrument.driver import Bridge, InstrumentDriver
 from instrument.serial_bridge import SerialBridge, list_serial_ports
 
@@ -59,6 +60,16 @@ class LabSession:
         self.close()
 
     # -- Public API ---------------------------------------------------
+
+    def discover(self) -> list[DiscoveredInstrument]:
+        """Probe every connected serial port with ``*IDN?``.
+
+        Returns a list of :class:`DiscoveredInstrument`. Matched
+        instruments (model present in ``config.REGISTRY``) have
+        ``.config`` set; unknown devices are still returned with their
+        raw IDN reply so the user can see them.
+        """
+        return discover()
 
     def open(
         self,

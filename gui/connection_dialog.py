@@ -150,31 +150,85 @@ class ConnectionDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _refresh_ports(self):
-        """Populate the port dropdown with available serial ports."""
+        """Populate the port dropdown with available serial ports.
+
+        When auto-discovery is enabled (``AppSettings.auto_discovery_enabled``
+        and Settings > Controls > "Auto-detect instruments via *IDN?"),
+        each CP2102N-ish port is probed with ``*IDN?`` and matched
+        against the registry; matched instruments are shown with
+        pretty names ("Agilent U2702A  [/dev/cu.usbserial-110]").
+        Unresponsive / unknown ports still appear below, so nothing
+        is hidden from the user.
+
+        When auto-discovery is disabled, the dialog behaves as it did
+        before: plain port list, no probe traffic on the bus.
+        """
         self._port_combo.clear()
         ports = list_serial_ports()
-
-        if ports:
-            cp2102n_found = False
-            last_port_idx = -1
-            for i, (device, description) in enumerate(ports):
-                self._port_combo.addItem(description, device)
-                if "CP2102" in description or "usbserial" in device:
-                    cp2102n_found = True
-                if device == self._last_port:
-                    last_port_idx = i
-
-            # Pre-select last used port if found
-            if last_port_idx >= 0:
-                self._port_combo.setCurrentIndex(last_port_idx)
-                self._log("Last used port pre-selected", "#50c878")
-            elif cp2102n_found:
-                self._log("CP2102N bridge detected", "#50c878")
-            else:
-                self._log("No CP2102N found — showing all ports", "#ffcc00")
-        else:
+        if not ports:
             self._port_combo.addItem("No serial ports found", "")
             self._log("No serial ports found", "#ff5555")
+            return
+
+        from gui.app_settings import SETTINGS
+        if not SETTINGS.auto_discovery_enabled:
+            self._log(
+                "Auto-discovery disabled — showing raw port list. "
+                "Enable in Settings > Controls to probe with *IDN?.",
+                "#ffcc00",
+            )
+            self._populate_plain(ports)
+            return
+
+        # Probe in the foreground. Each probe is short (~1.5s worst case);
+        # for a typical bench this is 1–3 ports. If this ever feels slow,
+        # move to a QThread and update the combo via a signal.
+        from instrument.discovery import discover
+        self._log("Probing ports with *IDN?…", "#888888")
+        discovered = discover(include_unresponsive=True)
+
+        if not discovered:
+            self._populate_plain(ports)
+            return
+
+        matched = 0
+        last_port_idx = -1
+        for i, inst in enumerate(discovered):
+            self._port_combo.addItem(inst.display_name, inst.port)
+            if inst.is_matched:
+                matched += 1
+            if inst.port == self._last_port:
+                last_port_idx = i
+
+        if last_port_idx >= 0:
+            self._port_combo.setCurrentIndex(last_port_idx)
+            self._log("Last used port pre-selected", "#50c878")
+        elif matched:
+            self._log(
+                f"Auto-discovered {matched} registered instrument(s)",
+                "#50c878",
+            )
+        else:
+            self._log(
+                "No registered instrument responded — showing all ports",
+                "#ffcc00",
+            )
+
+    def _populate_plain(self, ports):
+        """Fallback: populate with raw port descriptions only."""
+        cp2102n_found = False
+        last_port_idx = -1
+        for i, (device, description) in enumerate(ports):
+            self._port_combo.addItem(description, device)
+            if "CP2102" in description or "usbserial" in device:
+                cp2102n_found = True
+            if device == self._last_port:
+                last_port_idx = i
+        if last_port_idx >= 0:
+            self._port_combo.setCurrentIndex(last_port_idx)
+            self._log("Last used port pre-selected", "#50c878")
+        elif cp2102n_found:
+            self._log("CP2102N bridge detected", "#50c878")
 
     def _log(self, text: str, color: str = "#888888"):
         """Append a line to the status log."""
