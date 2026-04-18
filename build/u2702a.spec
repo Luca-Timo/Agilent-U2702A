@@ -130,8 +130,8 @@ if sys.platform == "darwin" and not ONEFILE:
         info_plist={
             "CFBundleName": APP_NAME,
             "CFBundleDisplayName": "LabTestBench",
-            "CFBundleShortVersionString": "0.11.0-alpha",
-            "CFBundleVersion": "0.11.0-alpha",
+            "CFBundleShortVersionString": "1.0.0-beta",
+            "CFBundleVersion": "1.0.0-beta",
             "NSHighResolutionCapable": "True",
         },
     )

@@ -2,7 +2,7 @@
 
 A macOS desktop application for the Agilent U2702A USB oscilloscope, built with PySide6 and PyQtGraph. Uses an ESP32-S3 as a USB bridge to bypass Apple Silicon USB driver limitations.
 
-## Current Version: 0.11.0-alpha
+## Current Version: 1.0.0-beta
 
 ### Features
 - Real-time dual-channel waveform display with dark theme

@@ -25,7 +25,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("LabTestBench")
-    app.setApplicationVersion("0.11.0-alpha")
+    app.setApplicationVersion("1.0.0-beta")
 
     # Theme choice is persisted via QSettings (separate from session
     # files so it survives even when the user nukes their session

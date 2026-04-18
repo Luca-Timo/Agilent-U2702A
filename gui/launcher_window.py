@@ -197,9 +197,19 @@ class LauncherWindow(QMainWindow):
         settings_menu.addAction(prefs_action)
 
         help_menu = bar.addMenu("&Help")
+        shortcuts_action = QAction("Keyboard &Shortcuts…", self)
+        shortcuts_action.setShortcut("Ctrl+/")
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+        help_menu.addSeparator()
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
+
+        # Also bind F1 / Ctrl+/ via QShortcut so the help sheet works
+        # even when the menu bar isn't focused (common case on macOS).
+        from gui.shortcuts_dialog import install_shortcut_help
+        install_shortcut_help(self)
 
     # -- Device list -------------------------------------------------
 
@@ -437,9 +447,17 @@ class LauncherWindow(QMainWindow):
         )
 
     def _on_child_destroyed(self, window):
+        # The destroyed signal can fire during our own teardown (when
+        # the launcher itself is being closed and child windows are
+        # cascading-closed). In that case our _status_lbl may already
+        # be deleted — catch that cleanly.
         if window in self._child_windows:
             self._child_windows.remove(window)
-        self._update_status_line()
+        try:
+            self._update_status_line()
+        except RuntimeError:
+            # Internal C++ object already deleted — we're on the way out.
+            pass
 
     def _update_status_line(self):
         n = len(self._child_windows)
@@ -456,6 +474,10 @@ class LauncherWindow(QMainWindow):
         dlg.exec()
         # Discovery toggle may have changed — rescan.
         self.refresh()
+
+    def _show_shortcuts(self):
+        from gui.shortcuts_dialog import ShortcutsDialog
+        ShortcutsDialog(parent=self).exec()
 
     def _show_about(self):
         QMessageBox.about(

@@ -203,6 +203,19 @@ class InstrumentWindow(QMainWindow):
         close_action.triggered.connect(self.close)
         file_menu.addAction(close_action)
 
+        help_menu = bar.addMenu("&Help")
+        shortcuts_action = QAction("Keyboard &Shortcuts…", self)
+        shortcuts_action.setShortcut("Ctrl+/")
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+
+        from gui.shortcuts_dialog import install_shortcut_help
+        install_shortcut_help(self)
+
+    def _show_shortcuts(self):
+        from gui.shortcuts_dialog import ShortcutsDialog
+        ShortcutsDialog(parent=self).exec()
+
     # -- Acquisition thread ------------------------------------------
 
     def _spawn_worker(self):

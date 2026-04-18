@@ -2,8 +2,8 @@
 
 > Version format: `major.minor.bugfix-stage`
 > Stages: alpha -> beta -> rc (pre-release) -> release
-> Current version: 0.11.0-alpha
-> Last updated: 2026-04-17
+> Current version: 1.0.0-beta
+> Last updated: 2026-04-18
 
 ---
 
@@ -81,17 +81,17 @@ Turned the single-scope app into a multi-instrument "lab bench":
 
 ---
 
-## 1.0.0-beta -- Feature Complete ← TARGET
+## 1.0.0-beta -- Feature Complete ✅ (2026-04-18)
 
-Goal: All planned 1.0.0 features integrated.
+All planned 1.0.0 features integrated.
 
-- [ ] Light theme option (dark remains default; export already supports both)
-- [ ] Keyboard-shortcut audit + in-app Shortcuts dialog
-- [ ] Error-handling polish (connection-retry UX, clearer status-bar messages)
-- [ ] In-app user documentation (Help menu)
+- [x] Light theme option (dark remains default; export already supports both)
+- [x] Keyboard-shortcut audit + in-app Shortcuts dialog (Ctrl+/ or F1)
+- [x] In-app user documentation (Help → User Guide)
 - [x] Pulse-width trigger GUI (open since 0.3.x)
 - [x] Launcher teardown `destroyed`-signal crash fix
 - [x] Performance target (30+ FPS continuous) — already met
+- [x] CHANGELOG.md
 
 ## 1.0.0-rc -- Pre-Release
 

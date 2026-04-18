@@ -70,7 +70,7 @@ class StatusIndicator(QLabel):
         )
 
 
-APP_VERSION = "0.11.0-alpha"
+APP_VERSION = "1.0.0-beta"
 APP_COPYRIGHT = "Copyright © 2026 Luca Bresch"
 
 
@@ -406,10 +406,28 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menubar.addMenu("Help")
 
+        shortcuts_action = QAction("Keyboard Shortcuts…", self)
+        shortcuts_action.setMenuRole(QAction.MenuRole.NoRole)
+        shortcuts_action.setShortcut("Ctrl+/")
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+
+        user_guide_action = QAction("User Guide…", self)
+        user_guide_action.setMenuRole(QAction.MenuRole.NoRole)
+        user_guide_action.triggered.connect(self._show_user_guide)
+        help_menu.addAction(user_guide_action)
+
+        help_menu.addSeparator()
+
         about_action = QAction("About...", self)
         about_action.setMenuRole(QAction.MenuRole.NoRole)  # Keep in Help menu (macOS moves it otherwise)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
+
+        # Also bind F1 directly so the help sheet works regardless of
+        # menu focus.
+        from gui.shortcuts_dialog import install_shortcut_help
+        install_shortcut_help(self)
 
     _TB_BTN_HEIGHT = 28   # Uniform height for toolbar buttons & indicators
     _TB_BTN_MIN_W = 80    # Minimum width for Run/Stop/Single buttons
@@ -2056,6 +2074,16 @@ class MainWindow(QMainWindow):
                         new_vdiv * probe,
                         self._timebase_panel.t_per_div,
                     )
+
+    # --- Help ---
+
+    def _show_shortcuts(self):
+        from gui.shortcuts_dialog import ShortcutsDialog
+        ShortcutsDialog(parent=self).exec()
+
+    def _show_user_guide(self):
+        from gui.user_guide_dialog import UserGuideDialog
+        UserGuideDialog(parent=self).exec()
 
     # --- About ---
 
