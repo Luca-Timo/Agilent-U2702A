@@ -125,6 +125,7 @@ All planned 1.0.0 features integrated.
 
 ### Nice-to-have
 
+- [ ] **Per-instrument + multi-instrument session files** — today `gui/session.py` saves a single scope's state. Extend to save/load one instrument at a time (from its own window) AND the full bench (from the launcher). Move the "how to serialize" responsibility onto each driver (`gather_state` / `apply_state`) so adding a new instrument kind automatically gets session support. ~8-10 hours. (Backlogged 2026-04-18.)
 - [ ] Automated probe compensation (drive 33120A + measure overshoot/settling)
 - [ ] External trigger input support
 - [ ] TV trigger mode
