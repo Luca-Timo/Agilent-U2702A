@@ -240,6 +240,54 @@ class U2702ADriver:
     def set_trigger_coupling(self, coupling: str) -> None:
         self.bridge.write(protocol.trigger_edge_coupling_set(coupling), timeout=2.0)
 
+    # -- Trigger mode + Pulse-width (glitch) trigger -----------------
+
+    def set_trigger_mode(self, mode: str) -> None:
+        """Switch between trigger subsystems.
+
+        Valid: ``EDGE`` (the default), ``GLITCH`` (pulse width),
+        ``TV``, ``PATTERN``. The U2702A handles each subsystem's
+        parameters independently — switching mode doesn't lose the
+        per-subsystem settings.
+        """
+        self.bridge.write(protocol.trigger_mode_set(mode), timeout=2.0)
+
+    def set_trigger_pulse_polarity(self, polarity: str) -> None:
+        """``POS`` = positive-going pulse, ``NEG`` = negative."""
+        self.bridge.write(
+            protocol.trigger_glitch_polarity_set(polarity), timeout=2.0,
+        )
+
+    def set_trigger_pulse_qualifier(self, qualifier: str) -> None:
+        """Pulse-width comparison: ``LESS``, ``GRE``, ``RANG``, ``OUTRANG``."""
+        self.bridge.write(
+            protocol.trigger_glitch_qualifier_set(qualifier), timeout=2.0,
+        )
+
+    def set_trigger_pulse_greater(self, seconds: float) -> None:
+        """Threshold for the GRE (greater-than) qualifier."""
+        self.bridge.write(
+            protocol.trigger_glitch_greater_set(seconds), timeout=2.0,
+        )
+
+    def set_trigger_pulse_less(self, seconds: float) -> None:
+        """Threshold for the LESS qualifier."""
+        self.bridge.write(
+            protocol.trigger_glitch_less_set(seconds), timeout=2.0,
+        )
+
+    def set_trigger_pulse_range(self, min_s: float, max_s: float) -> None:
+        """Window for the RANG / OUTRANG qualifiers."""
+        self.bridge.write(
+            protocol.trigger_glitch_range_set(min_s, max_s), timeout=2.0,
+        )
+
+    def set_trigger_pulse_source(self, source: str) -> None:
+        """Channel the pulse-width comparator watches, e.g. ``CHAN1``."""
+        self.bridge.write(
+            protocol.trigger_glitch_source_set(source), timeout=2.0,
+        )
+
     # -- Acquisition --------------------------------------------------
 
     @dataclass
@@ -417,6 +465,13 @@ class U2702ADriver:
         "trigger.slope": "set_trigger_slope",
         "trigger.sweep": "set_trigger_sweep",
         "trigger.coupling": "set_trigger_coupling",
+        # Pulse-width (glitch) trigger
+        "trigger.mode": "set_trigger_mode",
+        "trigger.pulse.polarity": "set_trigger_pulse_polarity",
+        "trigger.pulse.qualifier": "set_trigger_pulse_qualifier",
+        "trigger.pulse.greater": "set_trigger_pulse_greater",
+        "trigger.pulse.less": "set_trigger_pulse_less",
+        "trigger.pulse.source": "set_trigger_pulse_source",
     }
 
     _CHANNEL_FIELD_DISPATCH: dict[str, str] = {

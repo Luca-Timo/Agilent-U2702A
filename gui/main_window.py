@@ -650,6 +650,52 @@ class MainWindow(QMainWindow):
             lambda v: self.sig_set_trigger_coupling.emit(v)
         )
 
+        # Pulse-width (glitch) trigger wiring. Use apply_setting via a
+        # small shim — the driver already exposes the right keys, and
+        # keeping the dispatch generic avoids another Qt signal per
+        # setpoint. Safe no-op if the worker isn't attached yet.
+        def _pulse_apply(key: str, value):
+            if self._worker is not None and self._worker.driver is not None:
+                try:
+                    self._worker.driver.apply_setting(key, value)
+                except Exception as e:
+                    self.statusBar().showMessage(f"Pulse trigger: {e}", 4000)
+
+        self._trigger_panel.mode_changed.connect(
+            lambda m: _pulse_apply("trigger.mode", m),
+        )
+        self._trigger_panel.pulse_polarity_changed.connect(
+            lambda p: _pulse_apply("trigger.pulse.polarity", p),
+        )
+        self._trigger_panel.pulse_qualifier_changed.connect(
+            lambda q: _pulse_apply("trigger.pulse.qualifier", q),
+        )
+
+        def _on_pulse_threshold(value: float):
+            # Qualifier drives which SCPI threshold command to use.
+            qual = self._trigger_panel.pulse_qualifier
+            if qual == "GRE":
+                _pulse_apply("trigger.pulse.greater", value)
+            elif qual == "LESS":
+                _pulse_apply("trigger.pulse.less", value)
+            else:
+                # RANG / OUTRANG need a (min, max) pair; with a single
+                # knob the convention is "value = upper bound, lower =
+                # 30% of upper" so the user still sees the window
+                # move. Scripts wanting precise bounds should call
+                # driver.apply_setting directly.
+                if self._worker and self._worker.driver:
+                    try:
+                        self._worker.driver.set_trigger_pulse_range(
+                            value * 0.3, value,
+                        )
+                    except Exception as e:
+                        self.statusBar().showMessage(
+                            f"Pulse range: {e}", 4000,
+                        )
+
+        self._trigger_panel.pulse_threshold_changed.connect(_on_pulse_threshold)
+
         # --- Utility panel ---
         self._utility_panel.autoscale_requested.connect(self._on_autoscale)
         self._utility_panel.measurement_bar_toggled.connect(

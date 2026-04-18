@@ -223,12 +223,32 @@ def trigger_glitch_greater_query():
     return "TRIGGER:GLITCH:GRE?"
 
 
+def trigger_glitch_greater_set(seconds):
+    """Pulse-width threshold when QUALIFIER=GRE (fires on pulses longer)."""
+    return f"TRIGGER:GLITCH:GRE {seconds:.9E}"
+
+
 def trigger_glitch_less_query():
     return "TRIGGER:GLITCH:LESS?"
 
 
+def trigger_glitch_less_set(seconds):
+    """Pulse-width threshold when QUALIFIER=LESS (fires on pulses shorter)."""
+    return f"TRIGGER:GLITCH:LESS {seconds:.9E}"
+
+
 def trigger_glitch_range_query():
     return "TRIGGER:GLITCH:RANGE?"
+
+
+def trigger_glitch_range_set(min_seconds, max_seconds):
+    """Pulse-width window when QUALIFIER=RANG or OUTRANG."""
+    return f"TRIGGER:GLITCH:RANGE {min_seconds:.9E},{max_seconds:.9E}"
+
+
+def trigger_glitch_source_set(source):
+    """Channel the pulse-width comparator watches, e.g. 'CHAN1'."""
+    return f"TRIGGER:GLITCH:SOURCE {source}"
 
 
 # --- TV Trigger ---

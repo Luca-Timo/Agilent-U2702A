@@ -205,6 +205,29 @@ class TestU2702ADriver(DriverContractMixin, unittest.TestCase):
         self.assertIn("channel.1.vdiv", keys)
         self.assertIn("timebase.tdiv", keys)
         self.assertIn("trigger.level", keys)
+        # Pulse-width trigger wiring
+        self.assertIn("trigger.mode", keys)
+        self.assertIn("trigger.pulse.polarity", keys)
+        self.assertIn("trigger.pulse.qualifier", keys)
+        self.assertIn("trigger.pulse.greater", keys)
+        self.assertIn("trigger.pulse.less", keys)
+
+    def test_pulse_width_trigger_apply_setting(self):
+        """Pulse-width keys dispatch to the right bridge commands."""
+        drv = self.build_driver()
+        drv.open()
+        try:
+            drv.apply_setting("trigger.mode", "GLITCH")
+            drv.apply_setting("trigger.pulse.polarity", "POS")
+            drv.apply_setting("trigger.pulse.qualifier", "GRE")
+            drv.apply_setting("trigger.pulse.greater", 1e-4)
+            drv.apply_setting("trigger.pulse.less", 5e-6)
+            # No roundtrip here — the demo bridge echoes writes but
+            # the driver doesn't cache pulse-width state (it's
+            # scope-side). This test just proves the commands
+            # dispatch without raising.
+        finally:
+            drv.close()
 
 
 class TestGenericDMMDriver(DriverContractMixin, unittest.TestCase):
